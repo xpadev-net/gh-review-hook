@@ -9,9 +9,10 @@ import (
 )
 
 const (
-	apiBase      = "https://api.github.com"
-	pollInterval = 15 * time.Second
-	pollTimeout  = 30 * time.Minute
+	apiBase          = "https://api.github.com"
+	pollInterval     = 15 * time.Second
+	pollTimeout      = 30 * time.Minute
+	checksAppearWait = 60 * time.Second // max time to wait for at least one check to appear
 )
 
 // PR represents a GitHub Pull Request (partial fields).
@@ -115,6 +116,7 @@ func GetStatuses(owner, repo, sha, token string) ([]CommitStatus, error) {
 // Times out after 30 minutes.
 func WaitForChecks(owner, repo, sha, token string) (*CIResult, error) {
 	start := time.Now()
+	checksAppeared := false
 
 	for {
 		if time.Since(start) > pollTimeout {
@@ -133,6 +135,21 @@ func WaitForChecks(owner, repo, sha, token string) (*CIResult, error) {
 
 		// Deduplicate statuses by context (API returns newest first)
 		dedupStatuses := deduplicateStatuses(statuses)
+
+		totalChecks := len(checkRuns) + len(dedupStatuses)
+
+		// If no checks exist yet, wait for them to appear (up to checksAppearWait).
+		// CI providers (CodeRabbit, GitHub Actions, etc.) take a few seconds to
+		// register their check runs / statuses after a push.
+		if totalChecks == 0 {
+			if !checksAppeared && time.Since(start) < checksAppearWait {
+				time.Sleep(pollInterval)
+				continue
+			}
+			// No CI configured — treat as all green
+			return &CIResult{AllGreen: true}, nil
+		}
+		checksAppeared = true
 
 		// Check if all are completed
 		allCompleted := true

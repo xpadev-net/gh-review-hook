@@ -70,6 +70,10 @@ The intended use case is as a Claude Code "task completed" hook. Claude Code pus
   Rationale: After pushing code, the PR may not have been created yet (e.g., automated PR creation hasn't completed). Exiting with code 1 would incorrectly signal a tool failure. Exit 0 is the correct behavior because there is simply nothing to review yet, and the Claude Code hook should not loop on this condition.
   Date/Author: 2026-03-22 / plan author (post-review update)
 
+- Decision: Wait up to 60 seconds for at least one check run or commit status to appear before declaring CI as complete. If no checks appear within 60 seconds, treat as "no CI configured" and proceed with AllGreen=true.
+  Rationale: When the tool runs immediately after a push, CI providers (CodeRabbit, GitHub Actions, etc.) take a few seconds to register their check runs or statuses on the new commit SHA. Without this wait, the tool would see 0 check runs + 0 statuses and immediately declare AllGreen=true, skipping CI entirely. This was observed in production: CodeRabbit shows "Waiting for status to be reported — Review in progress" but the tool exited 0 because the status had not yet been posted to the API.
+  Date/Author: 2026-03-22 / plan author (post-implementation bugfix)
+
 - Decision: On CI failure, still fetch and output Greptile review alongside failed check names.
   Rationale: User wants both CI failure info and Greptile review content output together when both are available. This gives Claude Code maximum context for fixing issues. All feedback is combined into a single stderr output.
   Date/Author: 2026-03-22 / plan author
