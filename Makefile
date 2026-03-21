@@ -23,7 +23,7 @@ coverage:
 	go test -race -coverprofile=coverage.out ./...
 	go tool cover -func=coverage.out
 
-ci: lint test
+ci: lint test build
 
 clean:
 	rm -f $(BINARY) coverage.out

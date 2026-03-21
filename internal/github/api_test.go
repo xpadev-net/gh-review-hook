@@ -314,6 +314,32 @@ func TestGetCheckRuns_Pagination(t *testing.T) {
 	}
 }
 
+func TestGetCheckRuns_TerminatesOnEmptyPage(t *testing.T) {
+	callCount := 0
+	mux := http.NewServeMux()
+	mux.HandleFunc("/", func(w http.ResponseWriter, r *http.Request) {
+		callCount++
+		w.Header().Set("Content-Type", "application/json")
+		if callCount == 1 {
+			fmt.Fprint(w, `{"total_count":3,"check_runs":[{"name":"a","status":"completed","conclusion":"success"}]}`)
+		} else {
+			fmt.Fprint(w, `{"total_count":3,"check_runs":[]}`)
+		}
+	})
+	withTestServer(t, mux)
+
+	runs, err := GetCheckRuns("owner", "repo", "sha123", "token")
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if len(runs) != 1 {
+		t.Fatalf("got %d check runs, want 1 (should stop on empty page)", len(runs))
+	}
+	if callCount != 2 {
+		t.Errorf("expected 2 API calls, got %d", callCount)
+	}
+}
+
 func TestGetStatuses_TerminatesOnEmpty(t *testing.T) {
 	callCount := 0
 	mux := http.NewServeMux()
