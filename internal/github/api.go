@@ -85,7 +85,7 @@ func GetCheckRuns(owner, repo, sha, token string) ([]CheckRun, error) {
 			return nil, err
 		}
 		all = append(all, resp.CheckRuns...)
-		if len(all) >= resp.TotalCount {
+		if len(resp.CheckRuns) == 0 || len(all) >= resp.TotalCount {
 			break
 		}
 		page++

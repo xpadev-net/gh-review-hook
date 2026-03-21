@@ -87,9 +87,9 @@ func withTestServer(t *testing.T, handler http.Handler) *httptest.Server {
 	originalBase := apiBase
 	apiBase = ts.URL
 	t.Cleanup(func() {
+		ts.Close()
 		apiBase = originalBase
 		apiBaseMu.Unlock()
-		ts.Close()
 	})
 	return ts
 }

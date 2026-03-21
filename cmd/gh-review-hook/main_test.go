@@ -50,6 +50,20 @@ func TestParsePRURL(t *testing.T) {
 			input:   "",
 			wantErr: true,
 		},
+		{
+			name:      "trailing slash",
+			input:     "https://github.com/owner/repo/pull/789/",
+			wantOwner: "owner",
+			wantRepo:  "repo",
+			wantNum:   789,
+		},
+		{
+			name:      "trailing path segments (e.g. /files)",
+			input:     "https://github.com/owner/repo/pull/101/files",
+			wantOwner: "owner",
+			wantRepo:  "repo",
+			wantNum:   101,
+		},
 	}
 
 	for _, tt := range tests {
