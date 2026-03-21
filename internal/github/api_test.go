@@ -82,14 +82,14 @@ var apiBaseMu sync.Mutex
 // withTestServer sets apiBase to the test server URL and restores it on cleanup.
 func withTestServer(t *testing.T, handler http.Handler) *httptest.Server {
 	t.Helper()
-	apiBaseMu.Lock()
 	ts := httptest.NewServer(handler)
+	apiBaseMu.Lock()
 	originalBase := apiBase
 	apiBase = ts.URL
 	t.Cleanup(func() {
 		apiBase = originalBase
-		ts.Close()
 		apiBaseMu.Unlock()
+		ts.Close()
 	})
 	return ts
 }
@@ -108,7 +108,8 @@ func TestApiGet_Success(t *testing.T) {
 		w.Header().Set("Content-Type", "application/json")
 		json.NewEncoder(w).Encode(testPayload{Name: "hello", Value: 42})
 	})
-	ts := withTestServer(t, mux)
+	ts := httptest.NewServer(mux)
+	defer ts.Close()
 
 	var dest testPayload
 	err := apiGet(ts.URL+"/test", "my-token", &dest)
@@ -132,7 +133,8 @@ func TestApiGet_HTTPError(t *testing.T) {
 	mux.HandleFunc("/", func(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "not found", http.StatusNotFound)
 	})
-	ts := withTestServer(t, mux)
+	ts := httptest.NewServer(mux)
+	defer ts.Close()
 
 	var dest struct{}
 	err := apiGet(ts.URL+"/missing", "token", &dest)
@@ -147,7 +149,8 @@ func TestApiGet_InvalidJSON(t *testing.T) {
 		w.Header().Set("Content-Type", "application/json")
 		fmt.Fprint(w, "not json")
 	})
-	ts := withTestServer(t, mux)
+	ts := httptest.NewServer(mux)
+	defer ts.Close()
 
 	var dest struct{ Name string }
 	err := apiGet(ts.URL+"/bad", "token", &dest)
