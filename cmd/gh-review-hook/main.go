@@ -99,7 +99,7 @@ func run() int {
 	}
 
 	// Part 2: Confidence Score (only if Greptile review found and not 5/5)
-	if found && confidenceSection != "" && !strings.Contains(confidenceSection, "5/5") {
+	if found && confidenceSection != "" && !strings.HasPrefix(confidenceSection, "<h3>Confidence Score: 5/5</h3>") {
 		feedbackParts = append(feedbackParts, confidenceSection)
 	}
 

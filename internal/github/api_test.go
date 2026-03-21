@@ -209,15 +209,7 @@ func TestFindPR(t *testing.T) {
 			if err != nil {
 				t.Fatalf("unexpected error: %v", err)
 			}
-			if tt.wantNil {
-				if pr != nil {
-					t.Fatalf("expected nil PR, got %+v", pr)
-				}
-				return
-			}
-			if pr.Number != tt.wantNumber {
-				t.Errorf("PR number = %d, want %d", pr.Number, tt.wantNumber)
-			}
+			// Verify URL for all non-error cases (found and not-found use the same URL)
 			if !strings.HasPrefix(gotPath, "/repos/myowner/myrepo/pulls") {
 				t.Errorf("request path = %q, want prefix /repos/myowner/myrepo/pulls", gotPath)
 			}
@@ -226,6 +218,15 @@ func TestFindPR(t *testing.T) {
 			}
 			if !strings.Contains(gotPath, "state=open") {
 				t.Errorf("request URL %q missing state=open query param", gotPath)
+			}
+			if tt.wantNil {
+				if pr != nil {
+					t.Fatalf("expected nil PR, got %+v", pr)
+				}
+				return
+			}
+			if pr.Number != tt.wantNumber {
+				t.Errorf("PR number = %d, want %d", pr.Number, tt.wantNumber)
 			}
 		})
 	}
