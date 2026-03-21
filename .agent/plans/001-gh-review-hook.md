@@ -7,8 +7,11 @@ This ExecPlan is a living document. The sections `Progress`, `Surprises & Discov
 
 After this change, a developer (or an automated hook) can run a single command inside a Git repository that has an open GitHub Pull Request. The command will:
 
-1. Verify there are no uncommitted or unpushed changes (if there are, it prints a message to stderr and exits with code 1).
-2. Find the PR associated with the current branch (or accept a PR number/URL as an argument).
+1. Verify the working tree is clean and commits are pushed:
+   - If there are uncommitted changes, print a message to stderr and exit with code 1.
+   - If the current branch has no upstream tracking branch (never been pushed), silently exit 0 — there is nothing to review.
+   - If there are unpushed commits (upstream exists but HEAD is ahead), print a message to stderr and exit with code 1.
+2. Find the PR associated with the current branch (or accept a PR number/URL as an argument). If no PR is found for the current branch, silently exit 0 — there is nothing to review yet.
 3. Poll GitHub until every CI check (Check Runs and Commit Statuses) on the PR's head commit reports a completed state.
 4. After all checks complete, wait 10 seconds for Greptile's bot to update the PR description with its review.
 5. Fetch the PR description and extract: (a) the Confidence Score section (from `<h3>Confidence Score:` up to the next `<h3>` tag), and (b) the "Prompt To Fix All With AI" block content.
@@ -19,7 +22,7 @@ After this change, a developer (or an automated hook) can run a single command i
 
 Exit code semantics (aligned with Claude Code hooks `TaskCompleted` spec):
 - **0** = no issues, task is complete.
-- **1** = precondition failure (dirty tree, no PR, auth failure, timeout). The tool itself cannot proceed.
+- **1** = precondition failure (dirty tree, unpushed commits, auth failure, timeout). The tool itself cannot proceed. Note: "no upstream" and "no PR found" are NOT precondition failures — they exit 0 because there is simply nothing to review.
 - **2** = actionable feedback for the AI. stderr contains the feedback (CI failure names, Greptile findings). Claude Code will feed stderr back to the AI and re-run the task.
 
 The intended use case is as a Claude Code "task completed" hook. Claude Code pushes changes, this tool waits for CI and Greptile. If exit 2, Claude Code reads stderr, fixes issues, and loops. If exit 0, the task is done.
@@ -58,6 +61,18 @@ The intended use case is as a Claude Code "task completed" hook. Claude Code pus
 - Decision: Exit code semantics aligned with Claude Code hooks `TaskCompleted` spec: 0 = no issues, 1 = precondition failure, 2 = actionable feedback for AI via stderr.
   Rationale: Per https://code.claude.com/docs/ja/hooks#taskcompleted, exit code 2 with stderr is how a hook feeds back to the AI. When CI fails or Confidence < 5/5, the tool exits 2 and writes feedback to stderr so Claude Code re-runs the task with that feedback. Exit 0 means nothing to fix. Exit 1 means the tool itself cannot proceed.
   Date/Author: 2026-03-22 / plan author (updated: originally exit 0 for all, then aligned with hooks spec)
+
+- Decision: When no upstream tracking branch is configured (`@{u}` resolution fails), exit 0 silently instead of exit 1.
+  Rationale: A branch with no upstream has never been pushed, so there is no PR to review. This is not an error condition — the tool simply has nothing to do. Exit 0 lets the Claude Code hook loop proceed without treating it as a precondition failure.
+  Date/Author: 2026-03-22 / plan author (post-review update)
+
+- Decision: When no PR is found for the current branch, exit 0 silently instead of exit 1.
+  Rationale: After pushing code, the PR may not have been created yet (e.g., automated PR creation hasn't completed). Exiting with code 1 would incorrectly signal a tool failure. Exit 0 is the correct behavior because there is simply nothing to review yet, and the Claude Code hook should not loop on this condition.
+  Date/Author: 2026-03-22 / plan author (post-review update)
+
+- Decision: Wait up to 60 seconds for at least one check run or commit status to appear before declaring CI as complete. If no checks appear within 60 seconds, treat as "no CI configured" and proceed with AllGreen=true.
+  Rationale: When the tool runs immediately after a push, CI providers (CodeRabbit, GitHub Actions, etc.) take a few seconds to register their check runs or statuses on the new commit SHA. Without this wait, the tool would see 0 check runs + 0 statuses and immediately declare AllGreen=true, skipping CI entirely. This was observed in production: CodeRabbit shows "Waiting for status to be reported — Review in progress" but the tool exited 0 because the status had not yet been posted to the API.
+  Date/Author: 2026-03-22 / plan author (post-implementation bugfix)
 
 - Decision: On CI failure, still fetch and output Greptile review alongside failed check names.
   Rationale: User wants both CI failure info and Greptile review content output together when both are available. This gives Claude Code maximum context for fixing issues. All feedback is combined into a single stderr output.
@@ -171,11 +186,11 @@ The code is organized into a flat package structure inside `cmd/gh-review-hook/`
 
 The flow in `main.go`:
 
-1. Call `git.EnsureClean()` which runs `git status --porcelain` and `git log @{upstream}..HEAD --oneline`. If the first returns non-empty output, print "uncommitted changes detected; please commit before running" to stderr and `os.Exit(1)`. If the second returns non-empty output, print "unpushed commits detected; please push before running" to stderr and `os.Exit(1)`.
+1. Call `git.EnsureClean()` which runs `git status --porcelain` and checks for unpushed commits. If the first returns non-empty output, print "uncommitted changes detected; please commit before running" to stderr and `os.Exit(1)`. For unpushed commits: first run `git rev-parse --abbrev-ref --symbolic-full-name @{u}` to check if an upstream tracking branch is set. If this command fails (no upstream configured), silently pass (exit 0) — the branch has not been pushed yet and there is no PR to check. If an upstream exists, run `git log @{upstream}..HEAD --oneline`. If output is non-empty, print "unpushed commits detected; please push before running" to stderr and `os.Exit(1)`.
 
 2. Resolve the GitHub token by calling `auth.GetToken()`, which checks `GITHUB_TOKEN` env var first, then runs `gh auth token` as a fallback. If neither works, print "GitHub token not found: set GITHUB_TOKEN or run 'gh auth login'" to stderr and exit 1.
 
-3. Determine the PR. If a positional argument is given, parse it as a PR number (plain integer) or a GitHub PR URL (`https://github.com/{owner}/{repo}/pull/{number}` — query parameters like `?w=1` are stripped before parsing). When a URL is given, extract owner, repo, and number from the URL path. When a plain number is given, use owner/repo from `git.RemoteInfo()`. If no argument, call `git.CurrentBranch()` to get the branch name, call `git.RemoteInfo()` to parse owner/repo from the origin remote URL, then call `github.FindPR(owner, repo, branch, token)` which hits `GET /repos/{owner}/{repo}/pulls?head={owner}:{branch}&state=open` and returns the first match. If no PR is found, print "no open PR found for branch {name}" to stderr and exit 1. If the argument is neither a valid number nor a valid GitHub PR URL, print "invalid argument: expected PR number or GitHub PR URL" to stderr and exit 1.
+3. Determine the PR. If a positional argument is given, parse it as a PR number (plain integer) or a GitHub PR URL (`https://github.com/{owner}/{repo}/pull/{number}` — query parameters like `?w=1` are stripped before parsing). When a URL is given, extract owner, repo, and number from the URL path. When a plain number is given, use owner/repo from `git.RemoteInfo()`. If no argument, call `git.CurrentBranch()` to get the branch name, call `git.RemoteInfo()` to parse owner/repo from the origin remote URL, then call `github.FindPR(owner, repo, branch, token)` which hits `GET /repos/{owner}/{repo}/pulls?head={owner}:{branch}&state=open` and returns the first match. If no PR is found, silently exit 0 — there is nothing to review yet (the PR may not have been created or an automated PR creation may not have completed). If the argument is neither a valid number nor a valid GitHub PR URL, print "invalid argument: expected PR number or GitHub PR URL" to stderr and exit 1.
 
 4. Get the PR's head SHA via the PR object's `head.sha` field (already returned from step 3).
 
@@ -234,7 +249,7 @@ Expected output:
 This file provides functions to interact with the local Git repository. All functions shell out to the `git` command.
 
 Functions:
-- `EnsureClean() error` — runs `git status --porcelain`. If output is non-empty, returns an error with the message "uncommitted changes detected; please commit before running". Then runs `git log @{upstream}..HEAD --oneline`. If output is non-empty, returns an error with message "unpushed commits detected; please push before running". Returns nil if clean.
+- `EnsureClean() (pass bool, err error)` — runs `git status --porcelain`. If output is non-empty, returns `(false, error)` with the message "uncommitted changes detected; please commit before running". Then runs `git rev-parse --abbrev-ref --symbolic-full-name @{u}` to check if an upstream tracking branch is configured. If this command fails (exit code != 0), the branch has no upstream — return `(true, nil)` to signal the caller should silently exit 0 (no upstream means the branch has never been pushed, so there is no PR to review). If an upstream exists, runs `git log @{upstream}..HEAD --oneline`. If output is non-empty, returns `(false, error)` with message "unpushed commits detected; please push before running". Returns `(false, nil)` if clean and ready to proceed.
 - `CurrentBranch() (string, error)` — runs `git symbolic-ref --short HEAD` and returns the trimmed output.
 - `RemoteInfo() (owner string, repo string, err error)` — runs `git remote get-url origin` and parses the result. Supports SSH (`git@github.com:owner/repo.git`) and HTTPS (`https://github.com/owner/repo.git`) formats. Also handles `ssh://git@github.com/owner/repo.git`. Strips the trailing `.git` suffix if present (works correctly if `.git` is already absent). Returns an error if the URL does not match any supported format or if owner/repo would be empty.
 
@@ -346,9 +361,11 @@ The tool is validated by the following scenarios:
 
 1. **Dirty working tree**: Create an uncommitted file, run `./gh-review-hook`. Expected: stderr prints "uncommitted changes detected; please commit before running" and exit code is 1.
 
-2. **Unpushed commits**: Make a commit without pushing, run `./gh-review-hook`. Expected: stderr prints "unpushed commits detected; please push before running" and exit code is 1.
+2. **Unpushed commits (with upstream)**: On a branch that tracks a remote, make a commit without pushing, run `./gh-review-hook`. Expected: stderr prints "unpushed commits detected; please push before running" and exit code is 1.
 
-3. **No PR found**: On a branch with no open PR, run `./gh-review-hook`. Expected: stderr prints "no open PR found for branch {name}" and exit code is 1.
+2b. **No upstream configured**: On a newly created local branch that has never been pushed (no upstream tracking branch), run `./gh-review-hook`. Expected: no output, exit code is 0 (silently passes through — nothing to review).
+
+3. **No PR found**: On a branch with no open PR, run `./gh-review-hook`. Expected: no output, exit code is 0 (silently passes through — nothing to review yet).
 
 4. **CI fails, Greptile review with findings**: On a PR where CI fails and Greptile has findings (Confidence < 5/5), run `./gh-review-hook`. Expected: stderr prints failed check names, `---`, Confidence Score section, `---`, Prompt To Fix All With AI content. Exit code is 2.
 
