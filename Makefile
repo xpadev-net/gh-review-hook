@@ -15,7 +15,7 @@ lint:
 	@if command -v golangci-lint >/dev/null 2>&1; then \
 		golangci-lint run ./...; \
 	else \
-		echo "golangci-lint not found, falling back to go vet"; \
+		echo "golangci-lint not found, falling back to go vet" >&2; \
 		go vet ./...; \
 	fi
 
