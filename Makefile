@@ -1,4 +1,4 @@
-.PHONY: build test clean
+.PHONY: build test clean lint coverage ci
 
 BINARY=gh-review-hook
 
@@ -9,7 +9,21 @@ build:
 	go build -ldflags="-linkmode=external" -o $(BINARY) ./cmd/gh-review-hook
 
 test:
-	go test ./...
+	go test -v -race ./...
+
+lint:
+	@if command -v golangci-lint >/dev/null 2>&1; then \
+		golangci-lint run ./...; \
+	else \
+		echo "golangci-lint not found, falling back to go vet" >&2; \
+		go vet ./...; \
+	fi
+
+coverage:
+	go test -race -coverprofile=coverage.out ./...
+	go tool cover -func=coverage.out
+
+ci: lint test build
 
 clean:
-	rm -f $(BINARY)
+	rm -f $(BINARY) coverage.out

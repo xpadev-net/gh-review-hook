@@ -8,8 +8,9 @@ import (
 	"time"
 )
 
+var apiBase = "https://api.github.com"
+
 const (
-	apiBase          = "https://api.github.com"
 	pollInterval     = 15 * time.Second
 	pollTimeout      = 30 * time.Minute
 	checksAppearWait = 60 * time.Second // max time to wait for at least one check to appear
@@ -84,7 +85,7 @@ func GetCheckRuns(owner, repo, sha, token string) ([]CheckRun, error) {
 			return nil, err
 		}
 		all = append(all, resp.CheckRuns...)
-		if len(all) >= resp.TotalCount {
+		if len(resp.CheckRuns) == 0 || len(all) >= resp.TotalCount {
 			break
 		}
 		page++
