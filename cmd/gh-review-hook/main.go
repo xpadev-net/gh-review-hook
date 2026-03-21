@@ -23,12 +23,12 @@ func main() {
 
 func run() int {
 	// Step 1: Check working tree cleanliness
-	pass, err := git.EnsureClean()
+	noUpstream, err := git.EnsureClean()
 	if err != nil {
 		fmt.Fprintln(os.Stderr, err.Error())
 		return 1
 	}
-	if pass {
+	if noUpstream {
 		// No upstream configured — nothing to review
 		return 0
 	}

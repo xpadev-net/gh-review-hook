@@ -263,6 +263,9 @@ func TestGetPR(t *testing.T) {
 func TestGetCheckRuns_SinglePage(t *testing.T) {
 	mux := http.NewServeMux()
 	mux.HandleFunc("/", func(w http.ResponseWriter, r *http.Request) {
+		if want := "/repos/owner/repo/commits/sha123/check-runs"; r.URL.Path != want {
+			t.Errorf("request path = %q, want %q", r.URL.Path, want)
+		}
 		w.Header().Set("Content-Type", "application/json")
 		fmt.Fprint(w, `{"total_count":2,"check_runs":[{"name":"build","status":"completed","conclusion":"success"},{"name":"lint","status":"completed","conclusion":"failure"}]}`)
 	})
@@ -287,6 +290,9 @@ func TestGetCheckRuns_Pagination(t *testing.T) {
 	var pages []string
 	mux := http.NewServeMux()
 	mux.HandleFunc("/", func(w http.ResponseWriter, r *http.Request) {
+		if want := "/repos/owner/repo/commits/sha123/check-runs"; r.URL.Path != want {
+			t.Errorf("request path = %q, want %q", r.URL.Path, want)
+		}
 		pages = append(pages, r.URL.Query().Get("page"))
 		w.Header().Set("Content-Type", "application/json")
 		if len(pages) == 1 {
@@ -319,6 +325,9 @@ func TestGetCheckRuns_TerminatesOnEmptyPage(t *testing.T) {
 	callCount := 0
 	mux := http.NewServeMux()
 	mux.HandleFunc("/", func(w http.ResponseWriter, r *http.Request) {
+		if want := "/repos/owner/repo/commits/sha123/check-runs"; r.URL.Path != want {
+			t.Errorf("request path = %q, want %q", r.URL.Path, want)
+		}
 		callCount++
 		w.Header().Set("Content-Type", "application/json")
 		if callCount == 1 {
@@ -345,6 +354,9 @@ func TestGetStatuses_TerminatesOnEmpty(t *testing.T) {
 	callCount := 0
 	mux := http.NewServeMux()
 	mux.HandleFunc("/", func(w http.ResponseWriter, r *http.Request) {
+		if want := "/repos/owner/repo/commits/sha123/statuses"; r.URL.Path != want {
+			t.Errorf("request path = %q, want %q", r.URL.Path, want)
+		}
 		callCount++
 		w.Header().Set("Content-Type", "application/json")
 		if callCount == 1 {
@@ -368,6 +380,9 @@ func TestGetStatuses_Pagination(t *testing.T) {
 	var pages []string
 	mux := http.NewServeMux()
 	mux.HandleFunc("/", func(w http.ResponseWriter, r *http.Request) {
+		if want := "/repos/owner/repo/commits/sha123/statuses"; r.URL.Path != want {
+			t.Errorf("request path = %q, want %q", r.URL.Path, want)
+		}
 		pages = append(pages, r.URL.Query().Get("page"))
 		w.Header().Set("Content-Type", "application/json")
 		if len(pages) == 1 {
