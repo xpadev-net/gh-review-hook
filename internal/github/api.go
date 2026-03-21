@@ -8,8 +8,9 @@ import (
 	"time"
 )
 
+var apiBase = "https://api.github.com"
+
 const (
-	apiBase          = "https://api.github.com"
 	pollInterval     = 15 * time.Second
 	pollTimeout      = 30 * time.Minute
 	checksAppearWait = 60 * time.Second // max time to wait for at least one check to appear

@@ -1,4 +1,4 @@
-.PHONY: build test clean
+.PHONY: build test clean lint coverage ci
 
 BINARY=gh-review-hook
 
@@ -9,7 +9,16 @@ build:
 	go build -ldflags="-linkmode=external" -o $(BINARY) ./cmd/gh-review-hook
 
 test:
-	go test ./...
+	go test -v -race ./...
+
+lint:
+	go vet ./...
+
+coverage:
+	go test -race -coverprofile=coverage.out ./...
+	go tool cover -func=coverage.out
+
+ci: lint test
 
 clean:
-	rm -f $(BINARY)
+	rm -f $(BINARY) coverage.out
