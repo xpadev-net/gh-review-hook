@@ -98,13 +98,14 @@ func run() int {
 		feedbackParts = append(feedbackParts, strings.TrimRight(sb.String(), "\n"))
 	}
 
-	// Part 2: Confidence Score (only if Greptile review found and not 5/5)
-	if found && confidenceSection != "" && !strings.HasPrefix(confidenceSection, "<h3>Confidence Score: 5/5</h3>") {
+	// Part 2 & 3: Skip both confidence section and prompt when score is 5/5
+	is5of5 := found && strings.HasPrefix(confidenceSection, "<h3>Confidence Score: 5/5</h3>")
+
+	if found && confidenceSection != "" && !is5of5 {
 		feedbackParts = append(feedbackParts, confidenceSection)
 	}
 
-	// Part 3: Prompt To Fix All With AI (only if non-empty)
-	if prompt != "" {
+	if prompt != "" && !is5of5 {
 		feedbackParts = append(feedbackParts, prompt)
 	}
 
