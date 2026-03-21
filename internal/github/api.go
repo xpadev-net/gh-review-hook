@@ -114,9 +114,14 @@ func GetStatuses(owner, repo, sha, token string) ([]CommitStatus, error) {
 // WaitForChecks polls until all CI checks on the given SHA are complete.
 // Returns a CIResult indicating whether all checks passed and which failed.
 // Times out after 30 minutes.
+// Status changes are logged to stdout as they occur.
 func WaitForChecks(owner, repo, sha, token string) (*CIResult, error) {
 	start := time.Now()
 	checksAppeared := false
+
+	// Track previous status of each check for change detection
+	prevCheckRuns := make(map[string]string)  // name → status string
+	prevStatuses := make(map[string]string)   // context → state
 
 	for {
 		if time.Since(start) > pollTimeout {
@@ -150,6 +155,31 @@ func WaitForChecks(owner, repo, sha, token string) (*CIResult, error) {
 			return &CIResult{AllGreen: true}, nil
 		}
 		checksAppeared = true
+
+		// Log status changes for check runs
+		for _, cr := range checkRuns {
+			current := checkRunStatusString(cr)
+			if prev, ok := prevCheckRuns[cr.Name]; ok {
+				if prev != current {
+					fmt.Printf("[CI] %s: %s → %s\n", cr.Name, prev, current)
+				}
+			} else {
+				fmt.Printf("[CI] %s: %s\n", cr.Name, current)
+			}
+			prevCheckRuns[cr.Name] = current
+		}
+
+		// Log status changes for commit statuses
+		for _, s := range dedupStatuses {
+			if prev, ok := prevStatuses[s.Context]; ok {
+				if prev != s.State {
+					fmt.Printf("[CI] %s: %s → %s\n", s.Context, prev, s.State)
+				}
+			} else {
+				fmt.Printf("[CI] %s: %s\n", s.Context, s.State)
+			}
+			prevStatuses[s.Context] = s.State
+		}
 
 		// Check if all are completed
 		allCompleted := true
@@ -195,6 +225,14 @@ func WaitForChecks(owner, repo, sha, token string) (*CIResult, error) {
 
 		return result, nil
 	}
+}
+
+// checkRunStatusString returns a human-readable status string for a CheckRun.
+func checkRunStatusString(cr CheckRun) string {
+	if cr.Status == "completed" && cr.Conclusion != "" {
+		return fmt.Sprintf("%s (%s)", cr.Status, cr.Conclusion)
+	}
+	return cr.Status
 }
 
 // deduplicateStatuses keeps only the latest status per context.
