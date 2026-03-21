@@ -114,14 +114,20 @@ func GetStatuses(owner, repo, sha, token string) ([]CommitStatus, error) {
 // WaitForChecks polls until all CI checks on the given SHA are complete.
 // Returns a CIResult indicating whether all checks passed and which failed.
 // Times out after 30 minutes.
-// Status changes are logged to stdout as they occur.
-func WaitForChecks(owner, repo, sha, token string) (*CIResult, error) {
+// If logw is non-nil, status changes are logged to it as they occur.
+func WaitForChecks(owner, repo, sha, token string, logw io.Writer) (*CIResult, error) {
+	logf := func(format string, a ...any) {
+		if logw != nil {
+			fmt.Fprintf(logw, format, a...)
+		}
+	}
+
 	start := time.Now()
 	checksAppeared := false
 
 	// Track previous status of each check for change detection
-	prevCheckRuns := make(map[string]string)  // name → status string
-	prevStatuses := make(map[string]string)   // context → state
+	prevCheckRuns := make(map[string]string) // name → status string
+	prevStatuses := make(map[string]string)  // context → state
 
 	for {
 		if time.Since(start) > pollTimeout {
@@ -138,10 +144,11 @@ func WaitForChecks(owner, repo, sha, token string) (*CIResult, error) {
 			return nil, fmt.Errorf("failed to fetch commit statuses: %w", err)
 		}
 
-		// Deduplicate statuses by context (API returns newest first)
+		// Deduplicate by name/context (API returns newest first)
+		dedupCheckRuns := deduplicateCheckRuns(checkRuns)
 		dedupStatuses := deduplicateStatuses(statuses)
 
-		totalChecks := len(checkRuns) + len(dedupStatuses)
+		totalChecks := len(dedupCheckRuns) + len(dedupStatuses)
 
 		// If no checks exist yet, wait for them to appear (up to checksAppearWait).
 		// CI providers (CodeRabbit, GitHub Actions, etc.) take a few seconds to
@@ -157,14 +164,14 @@ func WaitForChecks(owner, repo, sha, token string) (*CIResult, error) {
 		checksAppeared = true
 
 		// Log status changes for check runs
-		for _, cr := range checkRuns {
+		for _, cr := range dedupCheckRuns {
 			current := checkRunStatusString(cr)
 			if prev, ok := prevCheckRuns[cr.Name]; ok {
 				if prev != current {
-					fmt.Printf("[CI] %s: %s → %s\n", cr.Name, prev, current)
+					logf("[CI] %s: %s → %s\n", cr.Name, prev, current)
 				}
 			} else {
-				fmt.Printf("[CI] %s: %s\n", cr.Name, current)
+				logf("[CI] %s: %s\n", cr.Name, current)
 			}
 			prevCheckRuns[cr.Name] = current
 		}
@@ -173,17 +180,17 @@ func WaitForChecks(owner, repo, sha, token string) (*CIResult, error) {
 		for _, s := range dedupStatuses {
 			if prev, ok := prevStatuses[s.Context]; ok {
 				if prev != s.State {
-					fmt.Printf("[CI] %s: %s → %s\n", s.Context, prev, s.State)
+					logf("[CI] %s: %s → %s\n", s.Context, prev, s.State)
 				}
 			} else {
-				fmt.Printf("[CI] %s: %s\n", s.Context, s.State)
+				logf("[CI] %s: %s\n", s.Context, s.State)
 			}
 			prevStatuses[s.Context] = s.State
 		}
 
 		// Check if all are completed
 		allCompleted := true
-		for _, cr := range checkRuns {
+		for _, cr := range dedupCheckRuns {
 			if cr.Status != "completed" {
 				allCompleted = false
 				break
@@ -206,7 +213,7 @@ func WaitForChecks(owner, repo, sha, token string) (*CIResult, error) {
 		// All completed — determine results
 		result := &CIResult{AllGreen: true}
 
-		for _, cr := range checkRuns {
+		for _, cr := range dedupCheckRuns {
 			switch cr.Conclusion {
 			case "success", "skipped", "neutral":
 				// OK
@@ -233,6 +240,20 @@ func checkRunStatusString(cr CheckRun) string {
 		return fmt.Sprintf("%s (%s)", cr.Status, cr.Conclusion)
 	}
 	return cr.Status
+}
+
+// deduplicateCheckRuns keeps only the latest check run per name.
+// The API returns newest-first, so the first occurrence per name is kept.
+func deduplicateCheckRuns(runs []CheckRun) []CheckRun {
+	seen := make(map[string]bool)
+	var result []CheckRun
+	for _, cr := range runs {
+		if !seen[cr.Name] {
+			seen[cr.Name] = true
+			result = append(result, cr)
+		}
+	}
+	return result
 }
 
 // deduplicateStatuses keeps only the latest status per context.
