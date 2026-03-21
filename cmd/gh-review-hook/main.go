@@ -13,6 +13,10 @@ import (
 	"github.com/xpadev/gh-review-hook/internal/parser"
 )
 
+// greptileUpdateDelay is the time to wait for Greptile to update the PR description
+// after CI checks complete.
+var greptileUpdateDelay = 10 * time.Second
+
 func main() {
 	os.Exit(run())
 }
@@ -67,7 +71,7 @@ func run() int {
 	}
 
 	// Step 5: Wait for Greptile to update PR description
-	time.Sleep(10 * time.Second)
+	time.Sleep(greptileUpdateDelay)
 
 	// Step 6: Fetch latest PR body
 	latestPR, err := github.GetPR(owner, repo, pr.Number, token)
@@ -130,7 +134,7 @@ func resolvePRFromArg(arg, token string) (*github.PR, string, string, error) {
 	// Try parsing as a GitHub PR URL
 	owner, repo, num, err := parsePRURL(arg)
 	if err != nil {
-		return nil, "", "", fmt.Errorf("invalid argument: expected PR number or GitHub PR URL")
+		return nil, "", "", fmt.Errorf("invalid argument %q: expected PR number or GitHub PR URL", arg)
 	}
 	pr, err := github.GetPR(owner, repo, num, token)
 	if err != nil {
@@ -158,6 +162,7 @@ func resolvePRFromBranch(token string) (*github.PR, string, string, error) {
 }
 
 // parsePRURL extracts owner, repo, and PR number from a GitHub PR URL.
+// Only public github.com URLs are supported (GitHub Enterprise is not supported).
 // Supports URLs like https://github.com/owner/repo/pull/123 (with optional query params).
 func parsePRURL(rawURL string) (string, string, int, error) {
 	u, err := url.Parse(rawURL)

@@ -12,7 +12,12 @@ test:
 	go test -v -race ./...
 
 lint:
-	go vet ./...
+	@if command -v golangci-lint >/dev/null 2>&1; then \
+		golangci-lint run ./...; \
+	else \
+		echo "golangci-lint not found, falling back to go vet"; \
+		go vet ./...; \
+	fi
 
 coverage:
 	go test -race -coverprofile=coverage.out ./...

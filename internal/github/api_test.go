@@ -5,6 +5,8 @@ import (
 	"fmt"
 	"net/http"
 	"net/http/httptest"
+	"strings"
+	"sync"
 	"testing"
 )
 
@@ -73,15 +75,21 @@ func TestDeduplicateStatuses(t *testing.T) {
 	}
 }
 
+// apiBaseMu guards mutations of the package-level apiBase variable.
+// Tests must not use t.Parallel() when calling withTestServer.
+var apiBaseMu sync.Mutex
+
 // withTestServer sets apiBase to the test server URL and restores it on cleanup.
 func withTestServer(t *testing.T, handler http.Handler) *httptest.Server {
 	t.Helper()
+	apiBaseMu.Lock()
 	ts := httptest.NewServer(handler)
 	originalBase := apiBase
 	apiBase = ts.URL
 	t.Cleanup(func() {
 		apiBase = originalBase
 		ts.Close()
+		apiBaseMu.Unlock()
 	})
 	return ts
 }
@@ -207,9 +215,14 @@ func TestFindPR(t *testing.T) {
 			if pr.Number != tt.wantNumber {
 				t.Errorf("PR number = %d, want %d", pr.Number, tt.wantNumber)
 			}
-			// Verify URL contains correct query parameters
-			if gotPath == "" {
-				t.Fatal("no request was made")
+			if !strings.HasPrefix(gotPath, "/repos/myowner/myrepo/pulls") {
+				t.Errorf("request path = %q, want prefix /repos/myowner/myrepo/pulls", gotPath)
+			}
+			if !strings.Contains(gotPath, "head=myowner:feat-branch") {
+				t.Errorf("request URL %q missing head=myowner:feat-branch query param", gotPath)
+			}
+			if !strings.Contains(gotPath, "state=open") {
+				t.Errorf("request URL %q missing state=open query param", gotPath)
 			}
 		})
 	}
@@ -267,12 +280,12 @@ func TestGetCheckRuns_SinglePage(t *testing.T) {
 }
 
 func TestGetCheckRuns_Pagination(t *testing.T) {
-	callCount := 0
+	var pages []string
 	mux := http.NewServeMux()
 	mux.HandleFunc("/", func(w http.ResponseWriter, r *http.Request) {
-		callCount++
+		pages = append(pages, r.URL.Query().Get("page"))
 		w.Header().Set("Content-Type", "application/json")
-		if callCount == 1 {
+		if len(pages) == 1 {
 			fmt.Fprint(w, `{"total_count":3,"check_runs":[{"name":"a","status":"completed","conclusion":"success"},{"name":"b","status":"completed","conclusion":"success"}]}`)
 		} else {
 			fmt.Fprint(w, `{"total_count":3,"check_runs":[{"name":"c","status":"completed","conclusion":"success"}]}`)
@@ -287,12 +300,18 @@ func TestGetCheckRuns_Pagination(t *testing.T) {
 	if len(runs) != 3 {
 		t.Fatalf("got %d check runs, want 3", len(runs))
 	}
-	if callCount != 2 {
-		t.Errorf("expected 2 API calls for pagination, got %d", callCount)
+	if len(pages) != 2 {
+		t.Fatalf("expected 2 API calls for pagination, got %d", len(pages))
+	}
+	if pages[0] != "1" {
+		t.Errorf("first request page = %q, want %q", pages[0], "1")
+	}
+	if pages[1] != "2" {
+		t.Errorf("second request page = %q, want %q", pages[1], "2")
 	}
 }
 
-func TestGetStatuses_SinglePage(t *testing.T) {
+func TestGetStatuses_TerminatesOnEmpty(t *testing.T) {
 	callCount := 0
 	mux := http.NewServeMux()
 	mux.HandleFunc("/", func(w http.ResponseWriter, r *http.Request) {
@@ -316,12 +335,12 @@ func TestGetStatuses_SinglePage(t *testing.T) {
 }
 
 func TestGetStatuses_Pagination(t *testing.T) {
-	callCount := 0
+	var pages []string
 	mux := http.NewServeMux()
 	mux.HandleFunc("/", func(w http.ResponseWriter, r *http.Request) {
-		callCount++
+		pages = append(pages, r.URL.Query().Get("page"))
 		w.Header().Set("Content-Type", "application/json")
-		if callCount == 1 {
+		if len(pages) == 1 {
 			fmt.Fprint(w, `[{"state":"success","context":"ci/build"}]`)
 		} else {
 			fmt.Fprint(w, `[]`)
@@ -336,7 +355,13 @@ func TestGetStatuses_Pagination(t *testing.T) {
 	if len(statuses) != 1 {
 		t.Fatalf("got %d statuses, want 1", len(statuses))
 	}
-	if callCount != 2 {
-		t.Errorf("expected 2 API calls for pagination, got %d", callCount)
+	if len(pages) != 2 {
+		t.Fatalf("expected 2 API calls for pagination, got %d", len(pages))
+	}
+	if pages[0] != "1" {
+		t.Errorf("first request page = %q, want %q", pages[0], "1")
+	}
+	if pages[1] != "2" {
+		t.Errorf("second request page = %q, want %q", pages[1], "2")
 	}
 }
