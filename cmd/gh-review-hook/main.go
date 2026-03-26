@@ -64,7 +64,7 @@ func run() int {
 	}
 
 	// Step 4: Wait for CI checks to complete
-	ciResult, err := github.WaitForChecks(owner, repo, pr.Head.SHA, token)
+	ciResult, err := github.WaitForChecks(owner, repo, pr.Head.SHA, token, os.Stdout)
 	if err != nil {
 		fmt.Fprintln(os.Stderr, err.Error())
 		return 1
