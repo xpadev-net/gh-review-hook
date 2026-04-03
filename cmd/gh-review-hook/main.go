@@ -84,11 +84,17 @@ func run() int {
 
 	// Step 8: Parse Greptile review
 	confidenceSection, prompt, found := parser.ExtractGreptileReview(latestPR.Body)
+	lastReviewedCommit := parser.ExtractLastReviewedCommit(latestPR.Body)
+	if found && !parser.IsCommitReviewed(latestPR.Head.SHA, lastReviewedCommit) {
+		found = false
+		confidenceSection = ""
+		prompt = ""
+	}
 
 	if !found {
 		// Prefer PR description mode first; some repositories still publish the
 		// canonical Greptile review in PR body updates.
-		reviewData, err := greptile.WaitForReviewInPRBodyWithInitialBody(owner, repo, pr.Number, latestPR.Head.SHA, token, latestPR.Body, os.Stdout)
+		reviewData, err := greptile.WaitForReviewInPRBody(owner, repo, pr.Number, latestPR.Head.SHA, token, os.Stdout)
 		if err != nil && !errors.Is(err, greptile.ErrReviewTimeout) {
 			fmt.Fprintln(os.Stderr, err.Error())
 			return 1

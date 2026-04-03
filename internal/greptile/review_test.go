@@ -716,7 +716,7 @@ Needs updates.
 	sleepFn = func(d time.Duration) {}
 	nowFn = func() time.Time { return time.Date(2026, 4, 1, 12, 0, 0, 0, time.UTC) }
 
-	review, err := waitForReviewInPRBody("owner", "repo", 1, "abcdef1234567890", "token", "", nil, time.Millisecond, time.Second)
+	review, err := waitForReviewInPRBody("owner", "repo", 1, "abcdef1234567890", "token", nil, time.Millisecond, time.Second)
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -753,7 +753,7 @@ func TestWaitForReviewInPRBody_TimesOutWhenNoMatchingCommit(t *testing.T) {
 		return time.Date(2026, 4, 1, 12, 0, tick, 0, time.UTC)
 	}
 
-	_, err := waitForReviewInPRBody("owner", "repo", 1, "abcdef1234567890", "token", "", nil, time.Millisecond, 2*time.Second)
+	_, err := waitForReviewInPRBody("owner", "repo", 1, "abcdef1234567890", "token", nil, time.Millisecond, 2*time.Second)
 	if err == nil {
 		t.Fatal("expected timeout error")
 	}
@@ -762,7 +762,7 @@ func TestWaitForReviewInPRBody_TimesOutWhenNoMatchingCommit(t *testing.T) {
 	}
 }
 
-func TestWaitForReviewInPRBody_UsesInitialBodyBeforeFetching(t *testing.T) {
+func TestWaitForReviewInPRBody_FetchesPRImmediately(t *testing.T) {
 	originalGetPR := getPRFn
 	originalSleep := sleepFn
 	originalNow := nowFn
@@ -777,27 +777,23 @@ func TestWaitForReviewInPRBody_UsesInitialBodyBeforeFetching(t *testing.T) {
 		getPRCalls++
 		pr := &github.PR{}
 		pr.Body = `<!-- greptile_comment -->
-<h3>Confidence Score: 5/5</h3>
-<sub>Last reviewed commit: deadbee</sub>
+<h3>Confidence Score: 4/5</h3>
+<sub>Last reviewed commit: abcdef1</sub>
 <!-- /greptile_comment -->`
 		return pr, nil
 	}
 	sleepFn = func(d time.Duration) {}
 	nowFn = func() time.Time { return time.Date(2026, 4, 1, 12, 0, 0, 0, time.UTC) }
 
-	initialBody := `<!-- greptile_comment -->
-<h3>Confidence Score: 4/5</h3>
-<sub>Last reviewed commit: abcdef1</sub>
-<!-- /greptile_comment -->`
-	review, err := waitForReviewInPRBody("owner", "repo", 1, "abcdef1234567890", "token", initialBody, nil, time.Millisecond, time.Second)
+	review, err := waitForReviewInPRBody("owner", "repo", 1, "abcdef1234567890", "token", nil, time.Millisecond, time.Second)
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
 	if review == nil || !review.Found {
-		t.Fatal("expected review result from initial body")
+		t.Fatal("expected review result from fetched PR body")
 	}
-	if getPRCalls != 0 {
-		t.Fatalf("getPRFn called %d times, want 0 when initial body already matches", getPRCalls)
+	if getPRCalls != 1 {
+		t.Fatalf("getPRFn called %d times, want 1 immediate fetch", getPRCalls)
 	}
 }
 
@@ -830,7 +826,7 @@ func TestWaitForReview_ReusesExistingTriggerComment(t *testing.T) {
 					CreatedAt: time.Date(2026, 4, 1, 12, 0, 1, 0, time.UTC),
 					User: struct {
 						Login string `json:"login"`
-					}{Login: "some-bot[bot]"},
+					}{Login: "greptile-apps[bot]"},
 					Reactions: github.CommentReactions{Eyes: 1},
 				},
 			}, nil
@@ -842,7 +838,7 @@ func TestWaitForReview_ReusesExistingTriggerComment(t *testing.T) {
 					CreatedAt: time.Date(2026, 4, 1, 12, 0, 1, 0, time.UTC),
 					User: struct {
 						Login string `json:"login"`
-					}{Login: "some-bot[bot]"},
+					}{Login: "greptile-apps[bot]"},
 					Reactions: github.CommentReactions{PlusOne: 1},
 				},
 				{

@@ -53,16 +53,10 @@ func WaitForReview(owner, repo string, prNumber int, headSHA, token string, logw
 // WaitForReviewInPRBody waits for a Greptile review in PR description that
 // matches the current HEAD commit via "Last reviewed commit".
 func WaitForReviewInPRBody(owner, repo string, prNumber int, headSHA, token string, logw io.Writer) (*parser.ReviewData, error) {
-	return waitForReviewInPRBody(owner, repo, prNumber, headSHA, token, "", logw, reviewPollInterval, reviewPollTimeout)
+	return waitForReviewInPRBody(owner, repo, prNumber, headSHA, token, logw, reviewPollInterval, reviewPollTimeout)
 }
 
-// WaitForReviewInPRBodyWithInitialBody behaves like WaitForReviewInPRBody but
-// uses initialBody for the first poll attempt to avoid an immediate refetch.
-func WaitForReviewInPRBodyWithInitialBody(owner, repo string, prNumber int, headSHA, token, initialBody string, logw io.Writer) (*parser.ReviewData, error) {
-	return waitForReviewInPRBody(owner, repo, prNumber, headSHA, token, initialBody, logw, reviewPollInterval, reviewPollTimeout)
-}
-
-func waitForReviewInPRBody(owner, repo string, prNumber int, headSHA, token, initialBody string, logw io.Writer, pollInterval, pollTimeout time.Duration) (*parser.ReviewData, error) {
+func waitForReviewInPRBody(owner, repo string, prNumber int, headSHA, token string, logw io.Writer, pollInterval, pollTimeout time.Duration) (*parser.ReviewData, error) {
 	logf := func(format string, a ...any) {
 		if logw != nil {
 			fmt.Fprintf(logw, format, a...)
@@ -70,22 +64,16 @@ func waitForReviewInPRBody(owner, repo string, prNumber int, headSHA, token, ini
 	}
 
 	start := nowFn()
-	useInitialBody := initialBody != ""
 	for {
 		if nowFn().Sub(start) > pollTimeout {
 			return nil, fmt.Errorf("%w after %s waiting for Greptile review in PR description", ErrReviewTimeout, pollTimeout)
 		}
 
-		body := initialBody
-		if !useInitialBody {
-			pr, err := getPRFn(owner, repo, prNumber, token)
-			if err != nil {
-				return nil, fmt.Errorf("failed to fetch PR while waiting for Greptile description review: %w", err)
-			}
-			body = pr.Body
-		} else {
-			useInitialBody = false
+		pr, err := getPRFn(owner, repo, prNumber, token)
+		if err != nil {
+			return nil, fmt.Errorf("failed to fetch PR while waiting for Greptile description review: %w", err)
 		}
+		body := pr.Body
 
 		confidence, prompt, found := parser.ExtractGreptileReview(body)
 		if found {
@@ -286,7 +274,7 @@ func latestTriggerComment(comments []github.IssueComment, minTimestamp time.Time
 	)
 	for i := range comments {
 		comment := comments[i]
-		if !isBotLogin(comment.User.Login) {
+		if !isAllowedGreptileActor(comment.User.Login) {
 			continue
 		}
 		if !strings.EqualFold(strings.TrimSpace(comment.Body), triggerCommentBody) {
@@ -303,8 +291,4 @@ func latestTriggerComment(comments []github.IssueComment, minTimestamp time.Time
 		}
 	}
 	return latest
-}
-
-func isBotLogin(login string) bool {
-	return strings.HasSuffix(strings.ToLower(strings.TrimSpace(login)), "[bot]")
 }
