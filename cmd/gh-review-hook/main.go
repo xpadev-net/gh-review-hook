@@ -88,12 +88,15 @@ func run() int {
 	if !found {
 		// Prefer PR description mode first; some repositories still publish the
 		// canonical Greptile review in PR body updates.
-		reviewData, err := greptile.WaitForReviewInPRBody(owner, repo, pr.Number, latestPR.Head.SHA, token, os.Stdout)
+		reviewData, err := greptile.WaitForReviewInPRBodyWithInitialBody(owner, repo, pr.Number, latestPR.Head.SHA, token, latestPR.Body, os.Stdout)
 		if err != nil && !errors.Is(err, greptile.ErrReviewTimeout) {
 			fmt.Fprintln(os.Stderr, err.Error())
 			return 1
 		}
 		if reviewData == nil {
+			if errors.Is(err, greptile.ErrReviewTimeout) {
+				fmt.Fprintln(os.Stdout, "[Greptile] description review not found, falling back to comment mode")
+			}
 			reviewData, err = greptile.WaitForReview(owner, repo, pr.Number, latestPR.Head.SHA, token, os.Stdout)
 			if err != nil {
 				if !errors.Is(err, greptile.ErrReviewTimeout) {
