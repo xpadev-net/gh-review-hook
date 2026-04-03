@@ -30,7 +30,7 @@ func TestInspectComments_PrefersLatestGreptileReview(t *testing.T) {
 		},
 	}
 
-	review, state := inspectComments(comments, time.Time{})
+	review, state, _ := inspectCommentsDetailed(comments, time.Time{})
 	if review == nil {
 		t.Fatal("expected latest review")
 	}
@@ -54,7 +54,7 @@ func TestInspectComments_RejectsSpoofedGreptileLogin(t *testing.T) {
 		},
 	}
 
-	review, state := inspectComments(comments, time.Time{})
+	review, state, _ := inspectCommentsDetailed(comments, time.Time{})
 	if review != nil {
 		t.Fatalf("expected spoofed actor review to be ignored, got %+v", review)
 	}
@@ -219,33 +219,73 @@ func TestWaitForReview_DoesNotTriggerWhenAlreadyCurrent(t *testing.T) {
 	}
 }
 
-func TestInspectComments_UsesLatestReactionState(t *testing.T) {
+func TestInspectCommentsDetailed_UsesLatestReactionStateFromGreptile(t *testing.T) {
 	comments := []github.IssueComment{
 		{
-			Body:      "@greptile review",
+			ID:        10,
+			Body:      `<h3>Confidence Score: 4/5</h3><sub>Last reviewed commit: abcdef1</sub>`,
 			CreatedAt: time.Date(2026, 4, 1, 10, 0, 0, 0, time.UTC),
 			User: struct {
 				Login string `json:"login"`
-			}{Login: "xpadev"},
+			}{Login: "greptile-apps[bot]"},
 			Reactions: github.CommentReactions{Eyes: 1, PlusOne: 0},
 		},
 		{
-			Body:      "@greptile review",
+			ID:        11,
+			Body:      `<h3>Confidence Score: 4/5</h3><sub>Last reviewed commit: abcdef1</sub>`,
 			CreatedAt: time.Date(2026, 4, 1, 10, 2, 0, 0, time.UTC),
 			User: struct {
 				Login string `json:"login"`
-			}{Login: "xpadev"},
+			}{Login: "greptile-apps[bot]"},
 			Reactions: github.CommentReactions{Eyes: 0, PlusOne: 1},
 		},
 	}
 
-	_, state := inspectComments(comments, time.Time{})
+	_, state, _ := inspectCommentsDetailed(comments, time.Time{})
 	if state != reactionStateReviewed {
 		t.Errorf("state = %q, want %q", state, reactionStateReviewed)
 	}
 }
 
-func TestInspectComments_IgnoresOldSignalsWithMinTimestamp(t *testing.T) {
+func TestInspectCommentsDetailedWithTrust_IgnoresUntrustedTriggerComment(t *testing.T) {
+	comments := []github.IssueComment{
+		{
+			ID:        100,
+			Body:      "@greptile review",
+			CreatedAt: time.Date(2026, 4, 1, 10, 1, 0, 0, time.UTC),
+			User: struct {
+				Login string `json:"login"`
+			}{Login: "untrusted-user"},
+			Reactions: github.CommentReactions{Eyes: 1},
+		},
+	}
+
+	_, state, _ := inspectCommentsDetailedWithTrust(comments, time.Time{}, time.Time{}, 0)
+	if state != reactionStateIdle {
+		t.Errorf("state = %q, want %q", state, reactionStateIdle)
+	}
+}
+
+func TestInspectCommentsDetailedWithTrust_UsesTrustedTriggerComment(t *testing.T) {
+	comments := []github.IssueComment{
+		{
+			ID:        100,
+			Body:      "@greptile review",
+			CreatedAt: time.Date(2026, 4, 1, 10, 1, 0, 0, time.UTC),
+			User: struct {
+				Login string `json:"login"`
+			}{Login: "xpadev"},
+			Reactions: github.CommentReactions{Eyes: 1},
+		},
+	}
+
+	_, state, _ := inspectCommentsDetailedWithTrust(comments, time.Time{}, time.Time{}, 100)
+	if state != reactionStateInProgress {
+		t.Errorf("state = %q, want %q", state, reactionStateInProgress)
+	}
+}
+
+func TestInspectCommentsDetailed_IgnoresOldSignalsWithMinTimestamp(t *testing.T) {
 	older := time.Date(2026, 4, 1, 10, 0, 0, 0, time.UTC)
 	newer := older.Add(2 * time.Minute)
 
@@ -259,6 +299,7 @@ func TestInspectComments_IgnoresOldSignalsWithMinTimestamp(t *testing.T) {
 			Reactions: github.CommentReactions{PlusOne: 1},
 		},
 		{
+			ID:        200,
 			Body:      "@greptile review",
 			CreatedAt: newer,
 			User: struct {
@@ -268,7 +309,7 @@ func TestInspectComments_IgnoresOldSignalsWithMinTimestamp(t *testing.T) {
 		},
 	}
 
-	review, state := inspectComments(comments, newer)
+	review, state, _ := inspectCommentsDetailedWithTrust(comments, newer, newer, 200)
 	if review != nil {
 		t.Fatalf("expected no review for minTimestamp filter, got %+v", review)
 	}
@@ -277,7 +318,7 @@ func TestInspectComments_IgnoresOldSignalsWithMinTimestamp(t *testing.T) {
 	}
 }
 
-func TestWaitForReview_DoesNotTriggerDuringEyesProgress(t *testing.T) {
+func TestWaitForReview_TriggersWhenNoCurrentReviewDespiteEyesProgress(t *testing.T) {
 	originalGet := getPRCommentsFn
 	originalCreate := createPRCommentFn
 	originalGetCommit := getCommitTimeFn
@@ -301,10 +342,12 @@ func TestWaitForReview_DoesNotTriggerDuringEyesProgress(t *testing.T) {
 		case 1:
 			return []github.IssueComment{
 				{
-					Body: "@greptile review",
+					ID: 1,
+					Body: `<h3>Confidence Score: 3/5</h3>
+<sub>Last reviewed commit: old1234</sub>`,
 					User: struct {
 						Login string `json:"login"`
-					}{Login: "xpadev"},
+					}{Login: "greptile-apps[bot]"},
 					CreatedAt: time.Date(2026, 4, 1, 12, 0, 1, 0, time.UTC),
 					Reactions: github.CommentReactions{Eyes: 1},
 				},
@@ -325,7 +368,7 @@ func TestWaitForReview_DoesNotTriggerDuringEyesProgress(t *testing.T) {
 	}
 	createPRCommentFn = func(owner, repo string, number int, body, token string) (*github.IssueComment, error) {
 		triggerCalls++
-		return &github.IssueComment{ID: 1, Body: body}, nil
+		return &github.IssueComment{ID: 1, Body: body, CreatedAt: time.Date(2026, 4, 1, 12, 0, 1, 0, time.UTC)}, nil
 	}
 	getCommitTimeFn = func(owner, repo, sha, token string) (time.Time, error) {
 		return time.Date(2026, 4, 1, 11, 59, 59, 0, time.UTC), nil
@@ -341,8 +384,8 @@ func TestWaitForReview_DoesNotTriggerDuringEyesProgress(t *testing.T) {
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
-	if triggerCalls != 0 {
-		t.Fatalf("trigger calls = %d, want 0 while eyes was in progress", triggerCalls)
+	if triggerCalls != 1 {
+		t.Fatalf("trigger calls = %d, want 1 when no current review exists", triggerCalls)
 	}
 	if review == nil {
 		t.Fatal("expected review result")
@@ -382,6 +425,7 @@ func TestWaitForReview_TriggersEvenWithStaleEyesFromOldRound(t *testing.T) {
 					Reactions: github.CommentReactions{PlusOne: 1},
 				},
 				{
+					ID:   500,
 					Body: "@greptile review",
 					User: struct {
 						Login string `json:"login"`
@@ -434,6 +478,180 @@ func TestWaitForReview_TriggersEvenWithStaleEyesFromOldRound(t *testing.T) {
 	}
 	if review.LastReviewedCommit != "abcdef1" {
 		t.Errorf("last reviewed commit = %q, want abcdef1", review.LastReviewedCommit)
+	}
+}
+
+func TestWaitForReview_TriggersDespiteUntrustedEyesSignal(t *testing.T) {
+	originalGet := getPRCommentsFn
+	originalCreate := createPRCommentFn
+	originalGetCommit := getCommitTimeFn
+	originalSleep := sleepFn
+	originalNow := nowFn
+	t.Cleanup(func() {
+		getPRCommentsFn = originalGet
+		createPRCommentFn = originalCreate
+		getCommitTimeFn = originalGetCommit
+		sleepFn = originalSleep
+		nowFn = originalNow
+	})
+
+	head := "abcdef1234567890"
+	step := 0
+	var triggerCalls int
+
+	getPRCommentsFn = func(owner, repo string, number int, token string) ([]github.IssueComment, error) {
+		step++
+		switch step {
+		case 1:
+			return []github.IssueComment{
+				{
+					ID:   777,
+					Body: "@greptile review",
+					User: struct {
+						Login string `json:"login"`
+					}{Login: "someone-else"},
+					CreatedAt: time.Date(2026, 4, 1, 12, 0, 1, 0, time.UTC),
+					Reactions: github.CommentReactions{Eyes: 1},
+				},
+			}, nil
+		default:
+			return []github.IssueComment{
+				{
+					Body: `<h3>Confidence Score: 4/5</h3>
+<sub>Last reviewed commit: abcdef1</sub>`,
+					User: struct {
+						Login string `json:"login"`
+					}{Login: "greptile-apps[bot]"},
+					CreatedAt: time.Date(2026, 4, 1, 12, 0, 2, 0, time.UTC),
+					Reactions: github.CommentReactions{PlusOne: 1},
+				},
+			}, nil
+		}
+	}
+	createPRCommentFn = func(owner, repo string, number int, body, token string) (*github.IssueComment, error) {
+		triggerCalls++
+		return &github.IssueComment{
+			ID:        999,
+			Body:      body,
+			CreatedAt: time.Date(2026, 4, 1, 12, 0, 1, 500000000, time.UTC),
+		}, nil
+	}
+	getCommitTimeFn = func(owner, repo, sha, token string) (time.Time, error) {
+		return time.Date(2026, 4, 1, 12, 0, 0, 0, time.UTC), nil
+	}
+	sleepFn = func(d time.Duration) {}
+	nowTick := 0
+	nowFn = func() time.Time {
+		nowTick++
+		return time.Date(2026, 4, 1, 12, 0, nowTick, 0, time.UTC)
+	}
+
+	review, err := waitForReview("owner", "repo", 1, head, "token", nil, time.Millisecond, 10*time.Second)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if triggerCalls != 1 {
+		t.Fatalf("trigger calls = %d, want 1", triggerCalls)
+	}
+	if review == nil {
+		t.Fatal("expected review result")
+	}
+}
+
+func TestWaitForReview_TriggersBeforeGreptileBotAppears(t *testing.T) {
+	originalGet := getPRCommentsFn
+	originalCreate := createPRCommentFn
+	originalGetCommit := getCommitTimeFn
+	originalSleep := sleepFn
+	originalNow := nowFn
+	t.Cleanup(func() {
+		getPRCommentsFn = originalGet
+		createPRCommentFn = originalCreate
+		getCommitTimeFn = originalGetCommit
+		sleepFn = originalSleep
+		nowFn = originalNow
+	})
+
+	head := "abcdef1234567890"
+	step := 0
+	var triggerCalls int
+
+	getPRCommentsFn = func(owner, repo string, number int, token string) ([]github.IssueComment, error) {
+		step++
+		switch step {
+		case 1:
+			return []github.IssueComment{
+				{
+					ID:   1,
+					Body: "@greptile review",
+					User: struct {
+						Login string `json:"login"`
+					}{Login: "xpadev"},
+					CreatedAt: time.Date(2026, 4, 1, 12, 0, 1, 0, time.UTC),
+					Reactions: github.CommentReactions{Eyes: 1},
+				},
+			}, nil
+		default:
+			return []github.IssueComment{
+				{
+					Body: `<h3>Confidence Score: 5/5</h3>
+<sub>Last reviewed commit: abcdef1</sub>`,
+					User: struct {
+						Login string `json:"login"`
+					}{Login: "greptile-apps[bot]"},
+					CreatedAt: time.Date(2026, 4, 1, 12, 0, 2, 0, time.UTC),
+					Reactions: github.CommentReactions{PlusOne: 1},
+				},
+			}, nil
+		}
+	}
+	createPRCommentFn = func(owner, repo string, number int, body, token string) (*github.IssueComment, error) {
+		triggerCalls++
+		return &github.IssueComment{ID: 1, Body: body, CreatedAt: time.Date(2026, 4, 1, 12, 0, 1, 0, time.UTC)}, nil
+	}
+	getCommitTimeFn = func(owner, repo, sha, token string) (time.Time, error) {
+		return time.Date(2026, 4, 1, 11, 59, 59, 0, time.UTC), nil
+	}
+	sleepFn = func(d time.Duration) {}
+	nowTick := 0
+	nowFn = func() time.Time {
+		nowTick++
+		return time.Date(2026, 4, 1, 12, 0, nowTick, 0, time.UTC)
+	}
+
+	review, err := waitForReview("owner", "repo", 1, head, "token", nil, time.Millisecond, 10*time.Second)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if triggerCalls != 1 {
+		t.Fatalf("trigger calls = %d, want 1 when no trusted in-progress signal exists", triggerCalls)
+	}
+	if review == nil {
+		t.Fatal("expected review result")
+	}
+}
+
+func TestCommentStateTimestamp_PrefersCreatedAt(t *testing.T) {
+	created := time.Date(2026, 4, 1, 10, 0, 0, 0, time.UTC)
+	updated := created.Add(10 * time.Minute)
+	got := commentStateTimestamp(github.IssueComment{
+		CreatedAt: created,
+		UpdatedAt: updated,
+	})
+	if !got.Equal(created) {
+		t.Fatalf("timestamp = %s, want created_at %s", got, created)
+	}
+}
+
+func TestCommentReviewTimestamp_PrefersUpdatedAtWhenEdited(t *testing.T) {
+	created := time.Date(2026, 4, 1, 10, 0, 0, 0, time.UTC)
+	updated := created.Add(10 * time.Minute)
+	got := commentReviewTimestamp(github.IssueComment{
+		CreatedAt: created,
+		UpdatedAt: updated,
+	})
+	if !got.Equal(updated) {
+		t.Fatalf("timestamp = %s, want updated_at %s", got, updated)
 	}
 }
 

@@ -81,13 +81,6 @@ func run() int {
 		return 1
 	}
 
-	// Step 7: Fetch PR comments
-	commentBodies, err := github.GetPRCommentBodies(owner, repo, pr.Number, token)
-	if err != nil {
-		fmt.Fprintf(os.Stderr, "failed to fetch PR comments: %v\n", err)
-		return 1
-	}
-
 	// Step 8: Parse Greptile review
 	confidenceSection, prompt, found := parser.ExtractGreptileReview(latestPR.Body)
 
@@ -104,19 +97,7 @@ func run() int {
 		}
 	}
 
-	// Step 9: Parse CodeRabbit prompts from comments
-	var codeRabbitPrompts []string
-	seenPrompts := make(map[string]bool)
-	for _, body := range commentBodies {
-		p := parser.ExtractCodeRabbitPrompt(body)
-		if p == "" || seenPrompts[p] {
-			continue
-		}
-		seenPrompts[p] = true
-		codeRabbitPrompts = append(codeRabbitPrompts, p)
-	}
-
-	// Step 10: Determine output and exit code
+	// Step 9: Determine output and exit code
 	var feedbackParts []string
 
 	// Part 1: CI failures
@@ -140,6 +121,24 @@ func run() int {
 
 	if prompt != "" && !is5of5 {
 		feedbackParts = append(feedbackParts, prompt)
+	}
+
+	// Step 10: Fetch latest PR comments and parse CodeRabbit prompts
+	commentBodies, err := github.GetPRCommentBodies(owner, repo, pr.Number, token)
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "failed to fetch PR comments: %v\n", err)
+		return 1
+	}
+
+	var codeRabbitPrompts []string
+	seenPrompts := make(map[string]bool)
+	for _, body := range commentBodies {
+		p := parser.ExtractCodeRabbitPrompt(body)
+		if p == "" || seenPrompts[p] {
+			continue
+		}
+		seenPrompts[p] = true
+		codeRabbitPrompts = append(codeRabbitPrompts, p)
 	}
 
 	// CodeRabbit prompts are treated as actionable review comments independent of

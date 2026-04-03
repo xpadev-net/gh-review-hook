@@ -57,6 +57,7 @@ func waitForReview(owner, repo string, prNumber int, headSHA, token string, logw
 	start := nowFn()
 	triggered := false
 	var triggerAt time.Time
+	var trustedTriggerCommentID int64
 	headCommitTime, err := getCommitTimeFn(owner, repo, headSHA, token)
 	if err != nil {
 		return nil, fmt.Errorf("failed to fetch head commit timestamp: %w", err)
@@ -73,14 +74,13 @@ func waitForReview(owner, repo string, prNumber int, headSHA, token string, logw
 			return nil, fmt.Errorf("failed to fetch PR comments: %w", err)
 		}
 
-		_, _, allReviews := inspectCommentsDetailed(comments, time.Time{})
-		matchingReview := latestMatchingReview(allReviews, headSHA)
-		reviewCurrent := matchingReview != nil
-		minTimestamp := headCommitTime
-		if !triggerAt.IsZero() && triggerAt.After(minTimestamp) {
-			minTimestamp = triggerAt
+		minStateTimestamp := headCommitTime
+		if !triggerAt.IsZero() && triggerAt.After(minStateTimestamp) {
+			minStateTimestamp = triggerAt
 		}
-		_, state, _ := inspectCommentsDetailed(comments, minTimestamp)
+		_, state, reviewCandidates := inspectCommentsDetailedWithTrust(comments, headCommitTime, minStateTimestamp, trustedTriggerCommentID)
+		matchingReview := latestMatchingReview(reviewCandidates, headSHA)
+		reviewCurrent := matchingReview != nil
 		if state != prevState {
 			switch state {
 			case reactionStateInProgress:
@@ -95,7 +95,7 @@ func waitForReview(owner, repo string, prNumber int, headSHA, token string, logw
 			return matchingReview, nil
 		}
 
-		if !triggered && !reviewCurrent && state != reactionStateInProgress {
+		if !triggered && !reviewCurrent {
 			posted, err := createPRCommentFn(owner, repo, prNumber, triggerCommentBody, token)
 			if err != nil {
 				return nil, fmt.Errorf("failed to trigger Greptile review: %w", err)
@@ -103,7 +103,8 @@ func waitForReview(owner, repo string, prNumber int, headSHA, token string, logw
 			triggered = true
 			triggerAt = headCommitTime
 			if posted != nil {
-				if postedAt := commentTimestamp(*posted); !postedAt.IsZero() {
+				trustedTriggerCommentID = posted.ID
+				if postedAt := commentStateTimestamp(*posted); !postedAt.IsZero() {
 					triggerAt = postedAt
 				}
 			}
@@ -121,6 +122,10 @@ func inspectComments(comments []github.IssueComment, minTimestamp time.Time) (*p
 }
 
 func inspectCommentsDetailed(comments []github.IssueComment, minTimestamp time.Time) (*parser.ReviewData, string, []reviewObservation) {
+	return inspectCommentsDetailedWithTrust(comments, minTimestamp, minTimestamp, 0)
+}
+
+func inspectCommentsDetailedWithTrust(comments []github.IssueComment, minReviewTimestamp, minStateTimestamp time.Time, trustedTriggerCommentID int64) (*parser.ReviewData, string, []reviewObservation) {
 	var (
 		latestReviewData   *parser.ReviewData
 		latestReviewUpdate time.Time
@@ -133,17 +138,13 @@ func inspectCommentsDetailed(comments []github.IssueComment, minTimestamp time.T
 
 	for i := range comments {
 		comment := comments[i]
-		body := strings.TrimSpace(comment.Body)
 		isGreptileActor := isAllowedGreptileActor(comment.User.Login)
-		isTriggerComment := strings.EqualFold(body, triggerCommentBody)
-		ts := commentTimestamp(comment)
-		if !minTimestamp.IsZero() && ts.Before(minTimestamp) {
-			continue
-		}
+		isTrustedTriggerComment := trustedTriggerCommentID != 0 && comment.ID == trustedTriggerCommentID
+		stateTS := commentStateTimestamp(comment)
 
-		if isGreptileActor || isTriggerComment {
-			if ts.After(latestStatusUpdate) || latestStatusUpdate.IsZero() {
-				latestStatusUpdate = ts
+		if (isGreptileActor || isTrustedTriggerComment) && (minStateTimestamp.IsZero() || !stateTS.Before(minStateTimestamp)) {
+			if stateTS.After(latestStatusUpdate) || latestStatusUpdate.IsZero() {
+				latestStatusUpdate = stateTS
 				status = reactionStateIdle
 				if comment.Reactions.Eyes > 0 {
 					status = reactionStateInProgress
@@ -161,22 +162,33 @@ func inspectCommentsDetailed(comments []github.IssueComment, minTimestamp time.T
 		if !review.Found {
 			continue
 		}
-		reviews = append(reviews, reviewObservation{data: review, timestamp: ts})
-		if latestReviewData == nil || ts.After(latestReviewUpdate) {
+		reviewTS := commentReviewTimestamp(comment)
+		if !minReviewTimestamp.IsZero() && reviewTS.Before(minReviewTimestamp) {
+			continue
+		}
+		reviews = append(reviews, reviewObservation{data: review, timestamp: reviewTS})
+		if latestReviewData == nil || reviewTS.After(latestReviewUpdate) {
 			reviewCopy := review
 			latestReviewData = &reviewCopy
-			latestReviewUpdate = ts
+			latestReviewUpdate = reviewTS
 		}
 	}
 
 	return latestReviewData, status, reviews
 }
 
-func commentTimestamp(comment github.IssueComment) time.Time {
-	if !comment.UpdatedAt.IsZero() {
+func commentStateTimestamp(comment github.IssueComment) time.Time {
+	if !comment.CreatedAt.IsZero() {
+		return comment.CreatedAt
+	}
+	return comment.UpdatedAt
+}
+
+func commentReviewTimestamp(comment github.IssueComment) time.Time {
+	if comment.UpdatedAt.After(comment.CreatedAt) {
 		return comment.UpdatedAt
 	}
-	return comment.CreatedAt
+	return commentStateTimestamp(comment)
 }
 
 func isAllowedGreptileActor(login string) bool {
