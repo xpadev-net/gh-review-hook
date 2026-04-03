@@ -28,6 +28,11 @@ type PR struct {
 	} `json:"head"`
 }
 
+// commentBody is a minimal representation of GitHub comments used by this tool.
+type commentBody struct {
+	Body string `json:"body"`
+}
+
 // CommentReactions represents the subset of reactions used by this tool.
 type CommentReactions struct {
 	PlusOne int `json:"+1"`
@@ -159,6 +164,65 @@ func GetCommitTimestamp(owner, repo, sha, token string) (time.Time, error) {
 		return commit.Commit.Author.Date, nil
 	}
 	return time.Time{}, fmt.Errorf("commit %s has no author/committer timestamp", sha)
+}
+
+// GetIssueCommentBodies fetches all issue comment bodies for a PR (paginated).
+func GetIssueCommentBodies(owner, repo string, number int, token string) ([]string, error) {
+	var bodies []string
+	page := 1
+	for {
+		url := fmt.Sprintf("%s/repos/%s/%s/issues/%d/comments?per_page=100&page=%d", apiBase, owner, repo, number, page)
+		var comments []commentBody
+		if err := apiGet(url, token, &comments); err != nil {
+			return nil, err
+		}
+		if len(comments) == 0 {
+			break
+		}
+		for _, c := range comments {
+			if c.Body != "" {
+				bodies = append(bodies, c.Body)
+			}
+		}
+		page++
+	}
+	return bodies, nil
+}
+
+// GetReviewCommentBodies fetches all PR review comment bodies (paginated).
+func GetReviewCommentBodies(owner, repo string, number int, token string) ([]string, error) {
+	var bodies []string
+	page := 1
+	for {
+		url := fmt.Sprintf("%s/repos/%s/%s/pulls/%d/comments?per_page=100&page=%d", apiBase, owner, repo, number, page)
+		var comments []commentBody
+		if err := apiGet(url, token, &comments); err != nil {
+			return nil, err
+		}
+		if len(comments) == 0 {
+			break
+		}
+		for _, c := range comments {
+			if c.Body != "" {
+				bodies = append(bodies, c.Body)
+			}
+		}
+		page++
+	}
+	return bodies, nil
+}
+
+// GetPRCommentBodies fetches PR issue comments and review comments and combines them.
+func GetPRCommentBodies(owner, repo string, number int, token string) ([]string, error) {
+	issueBodies, err := GetIssueCommentBodies(owner, repo, number, token)
+	if err != nil {
+		return nil, fmt.Errorf("failed to fetch issue comments: %w", err)
+	}
+	reviewBodies, err := GetReviewCommentBodies(owner, repo, number, token)
+	if err != nil {
+		return nil, fmt.Errorf("failed to fetch review comments: %w", err)
+	}
+	return append(issueBodies, reviewBodies...), nil
 }
 
 // GetCheckRuns fetches all check runs for a commit SHA, handling pagination.

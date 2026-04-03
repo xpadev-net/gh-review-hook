@@ -416,6 +416,118 @@ func TestIsCommitReviewed(t *testing.T) {
 	}
 }
 
+func TestExtractCodeRabbitPrompt_AllReviewCommentsHeading(t *testing.T) {
+	body := `
+<details>
+<summary>🤖 Prompt for all review comments with AI agents</summary>
+
+` + "```" + `
+Fix issue A.
+Fix issue B.
+` + "```" + `
+
+</details>`
+
+	got := ExtractCodeRabbitPrompt(body)
+	if got == "" {
+		t.Fatal("expected non-empty prompt")
+	}
+	if strings.Contains(got, "```") {
+		t.Fatalf("expected fences to be stripped, got: %q", got)
+	}
+	if !strings.Contains(got, "Fix issue A.") || !strings.Contains(got, "Fix issue B.") {
+		t.Fatalf("unexpected prompt content: %q", got)
+	}
+}
+
+func TestExtractCodeRabbitPrompt_CompatHeading(t *testing.T) {
+	body := `
+<details>
+<summary>🤖 Prompt for AI Agents</summary>
+
+Please fix this.
+
+</details>`
+
+	got := ExtractCodeRabbitPrompt(body)
+	if got != "Please fix this." {
+		t.Fatalf("got %q, want %q", got, "Please fix this.")
+	}
+}
+
+func TestExtractCodeRabbitPrompt_NoMatchingSection(t *testing.T) {
+	body := `
+<details>
+<summary>Walkthrough</summary>
+Nothing
+</details>`
+
+	got := ExtractCodeRabbitPrompt(body)
+	if got != "" {
+		t.Fatalf("got %q, want empty", got)
+	}
+}
+
+func TestExtractCodeRabbitPrompt_MissingDetailsClose(t *testing.T) {
+	body := `
+<details>
+<summary>🤖 Prompt for all review comments with AI agents</summary>
+
+Fix this`
+
+	got := ExtractCodeRabbitPrompt(body)
+	if got != "" {
+		t.Fatalf("got %q, want empty for malformed details", got)
+	}
+}
+
+func TestExtractCodeRabbitPrompt_NestedDetails(t *testing.T) {
+	body := `
+<details>
+<summary>🤖 Prompt for all review comments with AI agents</summary>
+
+Fix the following issues:
+<details>
+<summary>More info</summary>
+Some nested content here.
+</details>
+This should be included in the output.
+
+</details>`
+
+	got := ExtractCodeRabbitPrompt(body)
+	if !strings.Contains(got, "Fix the following issues:") {
+		t.Fatalf("prompt missing initial content: %q", got)
+	}
+	if !strings.Contains(got, "Some nested content here.") {
+		t.Fatalf("prompt missing nested details content: %q", got)
+	}
+	if !strings.Contains(got, "This should be included in the output.") {
+		t.Fatalf("prompt was truncated after nested details: %q", got)
+	}
+}
+
+func TestExtractCodeRabbitPrompt_DoesNotMatchNestedInNonMatchingBlock(t *testing.T) {
+	body := `
+<details>
+<summary>Walkthrough</summary>
+<details>
+<summary>🤖 Prompt for all review comments with AI agents</summary>
+Nested prompt that should be ignored.
+</details>
+</details>
+
+<details>
+<summary>🤖 Prompt for AI Agents</summary>
+Top-level prompt that should be returned.
+</details>`
+
+	got := ExtractCodeRabbitPrompt(body)
+	if got != "Top-level prompt that should be returned." {
+		t.Fatalf("got %q, want top-level prompt", got)
+	}
+}
+
 func min(a, b int) int {
 	if a < b {
 		return a

@@ -616,3 +616,145 @@ func TestGetStatuses_Pagination(t *testing.T) {
 		t.Errorf("second request page = %q, want %q", pages[1], "2")
 	}
 }
+
+func TestGetIssueCommentBodies_Pagination(t *testing.T) {
+	var pages []string
+	mux := http.NewServeMux()
+	mux.HandleFunc("/", func(w http.ResponseWriter, r *http.Request) {
+		if want := "/repos/owner/repo/issues/99/comments"; r.URL.Path != want {
+			t.Errorf("request path = %q, want %q", r.URL.Path, want)
+		}
+		pages = append(pages, r.URL.Query().Get("page"))
+		w.Header().Set("Content-Type", "application/json")
+		switch len(pages) {
+		case 1:
+			fmt.Fprint(w, `[{"body":"issue-1"},{"body":""}]`)
+		case 2:
+			fmt.Fprint(w, `[{"body":"issue-2"}]`)
+		default:
+			fmt.Fprint(w, `[]`)
+		}
+	})
+	withTestServer(t, mux)
+
+	bodies, err := GetIssueCommentBodies("owner", "repo", 99, "token")
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+
+	want := []string{"issue-1", "issue-2"}
+	if len(bodies) != len(want) {
+		t.Fatalf("got %d bodies, want %d", len(bodies), len(want))
+	}
+	for i := range bodies {
+		if bodies[i] != want[i] {
+			t.Errorf("bodies[%d] = %q, want %q", i, bodies[i], want[i])
+		}
+	}
+	if len(pages) != 3 {
+		t.Fatalf("expected 3 API calls (2 pages + empty terminator), got %d", len(pages))
+	}
+}
+
+func TestGetReviewCommentBodies_Pagination(t *testing.T) {
+	var pages []string
+	mux := http.NewServeMux()
+	mux.HandleFunc("/", func(w http.ResponseWriter, r *http.Request) {
+		if want := "/repos/owner/repo/pulls/99/comments"; r.URL.Path != want {
+			t.Errorf("request path = %q, want %q", r.URL.Path, want)
+		}
+		pages = append(pages, r.URL.Query().Get("page"))
+		w.Header().Set("Content-Type", "application/json")
+		switch len(pages) {
+		case 1:
+			fmt.Fprint(w, `[{"body":"review-1"}]`)
+		default:
+			fmt.Fprint(w, `[]`)
+		}
+	})
+	withTestServer(t, mux)
+
+	bodies, err := GetReviewCommentBodies("owner", "repo", 99, "token")
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+
+	want := []string{"review-1"}
+	if len(bodies) != len(want) {
+		t.Fatalf("got %d bodies, want %d", len(bodies), len(want))
+	}
+	for i := range bodies {
+		if bodies[i] != want[i] {
+			t.Errorf("bodies[%d] = %q, want %q", i, bodies[i], want[i])
+		}
+	}
+	if len(pages) != 2 {
+		t.Fatalf("expected 2 API calls (1 page + empty terminator), got %d", len(pages))
+	}
+}
+
+func TestGetPRCommentBodies_CombinesIssueAndReview(t *testing.T) {
+	var issueCalls, reviewCalls int
+	mux := http.NewServeMux()
+	mux.HandleFunc("/", func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		switch r.URL.Path {
+		case "/repos/owner/repo/issues/99/comments":
+			issueCalls++
+			if issueCalls == 1 {
+				fmt.Fprint(w, `[{"body":"issue-1"}]`)
+				return
+			}
+			fmt.Fprint(w, `[]`)
+		case "/repos/owner/repo/pulls/99/comments":
+			reviewCalls++
+			if reviewCalls == 1 {
+				fmt.Fprint(w, `[{"body":"review-1"}]`)
+				return
+			}
+			fmt.Fprint(w, `[]`)
+		default:
+			t.Fatalf("unexpected path: %s", r.URL.Path)
+		}
+	})
+	withTestServer(t, mux)
+
+	bodies, err := GetPRCommentBodies("owner", "repo", 99, "token")
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+
+	want := []string{"issue-1", "review-1"}
+	if len(bodies) != len(want) {
+		t.Fatalf("got %d bodies, want %d", len(bodies), len(want))
+	}
+	for i := range bodies {
+		if bodies[i] != want[i] {
+			t.Errorf("bodies[%d] = %q, want %q", i, bodies[i], want[i])
+		}
+	}
+}
+
+func TestGetPRCommentBodies_ReviewError(t *testing.T) {
+	mux := http.NewServeMux()
+	mux.HandleFunc("/", func(w http.ResponseWriter, r *http.Request) {
+		switch r.URL.Path {
+		case "/repos/owner/repo/issues/99/comments":
+			w.Header().Set("Content-Type", "application/json")
+			fmt.Fprint(w, `[]`)
+		case "/repos/owner/repo/pulls/99/comments":
+			http.Error(w, "boom", http.StatusInternalServerError)
+		default:
+			t.Fatalf("unexpected path: %s", r.URL.Path)
+		}
+	})
+	withTestServer(t, mux)
+
+	_, err := GetPRCommentBodies("owner", "repo", 99, "token")
+	if err == nil {
+		t.Fatal("expected error")
+	}
+	if !strings.Contains(err.Error(), "failed to fetch review comments") {
+		t.Fatalf("error = %q, want context about review comments", err.Error())
+	}
+}
