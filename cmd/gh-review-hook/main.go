@@ -10,6 +10,7 @@ import (
 
 	"github.com/xpadev/gh-review-hook/internal/git"
 	"github.com/xpadev/gh-review-hook/internal/github"
+	"github.com/xpadev/gh-review-hook/internal/greptile"
 	"github.com/xpadev/gh-review-hook/internal/parser"
 )
 
@@ -82,6 +83,17 @@ func run() int {
 
 	// Step 7: Parse Greptile review
 	confidenceSection, prompt, found := parser.ExtractGreptileReview(latestPR.Body)
+
+	if !found {
+		reviewData, err := greptile.WaitForReview(owner, repo, pr.Number, latestPR.Head.SHA, token, os.Stdout)
+		if err != nil {
+			fmt.Fprintln(os.Stderr, err.Error())
+			return 1
+		}
+		confidenceSection = reviewData.ConfidenceSection
+		prompt = reviewData.Prompt
+		found = reviewData.Found
+	}
 
 	// Step 8: Determine output and exit code
 	var feedbackParts []string

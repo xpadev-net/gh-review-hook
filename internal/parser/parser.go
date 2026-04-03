@@ -1,6 +1,7 @@
 package parser
 
 import (
+	"regexp"
 	"strings"
 )
 
@@ -13,6 +14,20 @@ const (
 	promptAllOpen = "<details><summary>Prompt To Fix All With AI</summary>"
 	detailsClose  = "</details>"
 )
+
+var (
+	lastReviewedCommitRawRe  = regexp.MustCompile(`(?i)Last reviewed commit:\s*([0-9a-f]{7,40})`)
+	lastReviewedCommitLinkRe = regexp.MustCompile(`(?i)Last reviewed commit:\s*\[[^\]]+\]\([^)]+/commit/([0-9a-f]{7,40})\)`)
+)
+
+// ReviewData is parsed review information independent of where the review lives
+// (PR description block or issue comment body).
+type ReviewData struct {
+	ConfidenceSection  string
+	Prompt             string
+	LastReviewedCommit string
+	Found              bool
+}
 
 // ExtractGreptileReview parses a PR body and returns the Confidence Score
 // section (from <h3>Confidence Score: to before the next <h3> tag)
@@ -35,6 +50,47 @@ func ExtractGreptileReview(body string) (confidenceSection string, prompt string
 	prompt = extractPromptAll(block)
 
 	return confidenceSection, prompt, true
+}
+
+// ExtractGreptileReviewComment parses a Greptile issue comment body.
+// It extracts confidence/prompt sections the same way as ExtractGreptileReview
+// and also extracts the "Last reviewed commit" SHA when present.
+func ExtractGreptileReviewComment(body string) ReviewData {
+	confidence := extractConfidenceSection(body)
+	prompt := extractPromptAll(body)
+	last := ExtractLastReviewedCommit(body)
+
+	found := confidence != "" || prompt != "" || last != ""
+	return ReviewData{
+		ConfidenceSection:  confidence,
+		Prompt:             prompt,
+		LastReviewedCommit: last,
+		Found:              found,
+	}
+}
+
+// ExtractLastReviewedCommit returns the commit SHA found in a
+// "Last reviewed commit: ..." line. It supports both raw SHA and commit-link
+// formats. Returns empty string when no marker exists.
+func ExtractLastReviewedCommit(body string) string {
+	if m := lastReviewedCommitLinkRe.FindStringSubmatch(body); len(m) == 2 {
+		return strings.ToLower(m[1])
+	}
+	if m := lastReviewedCommitRawRe.FindStringSubmatch(body); len(m) == 2 {
+		return strings.ToLower(m[1])
+	}
+	return ""
+}
+
+// IsCommitReviewed returns true if reviewedCommit is a prefix of currentSHA
+// (to support both full and short SHAs).
+func IsCommitReviewed(currentSHA, reviewedCommit string) bool {
+	current := strings.ToLower(strings.TrimSpace(currentSHA))
+	reviewed := strings.ToLower(strings.TrimSpace(reviewedCommit))
+	if current == "" || reviewed == "" {
+		return false
+	}
+	return strings.HasPrefix(current, reviewed)
 }
 
 // extractConfidenceSection extracts everything from <h3>Confidence Score:
