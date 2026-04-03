@@ -1,6 +1,7 @@
 package github
 
 import (
+	"bytes"
 	"encoding/json"
 	"fmt"
 	"io"
@@ -9,6 +10,7 @@ import (
 )
 
 var apiBase = "https://api.github.com"
+var apiHTTPClient = &http.Client{Timeout: 30 * time.Second}
 
 const (
 	pollInterval     = 15 * time.Second
@@ -29,6 +31,36 @@ type PR struct {
 // commentBody is a minimal representation of GitHub comments used by this tool.
 type commentBody struct {
 	Body string `json:"body"`
+}
+
+// CommentReactions represents the subset of reactions used by this tool.
+type CommentReactions struct {
+	PlusOne int `json:"+1"`
+	Eyes    int `json:"eyes"`
+}
+
+// IssueComment represents a GitHub issue comment on a PR.
+type IssueComment struct {
+	ID        int64            `json:"id"`
+	Body      string           `json:"body"`
+	CreatedAt time.Time        `json:"created_at"`
+	UpdatedAt time.Time        `json:"updated_at"`
+	Reactions CommentReactions `json:"reactions"`
+	User      struct {
+		Login string `json:"login"`
+	} `json:"user"`
+}
+
+// Commit represents the subset of commit data needed for timing checks.
+type Commit struct {
+	Commit struct {
+		Author struct {
+			Date time.Time `json:"date"`
+		} `json:"author"`
+		Committer struct {
+			Date time.Time `json:"date"`
+		} `json:"committer"`
+	} `json:"commit"`
 }
 
 // CheckRun represents a GitHub Check Run.
@@ -77,6 +109,61 @@ func GetPR(owner, repo string, number int, token string) (*PR, error) {
 		return nil, err
 	}
 	return &pr, nil
+}
+
+// GetPRComments fetches all issue comments on a PR, handling pagination.
+func GetPRComments(owner, repo string, number int, token string) ([]IssueComment, error) {
+	var all []IssueComment
+	page := 1
+	for {
+		url := fmt.Sprintf("%s/repos/%s/%s/issues/%d/comments?per_page=100&page=%d", apiBase, owner, repo, number, page)
+		var comments []IssueComment
+		if err := apiGet(url, token, &comments); err != nil {
+			return nil, err
+		}
+		if len(comments) == 0 {
+			break
+		}
+		all = append(all, comments...)
+		page++
+	}
+	return all, nil
+}
+
+// CreatePRComment posts an issue comment on a PR.
+func CreatePRComment(owner, repo string, number int, body, token string) (*IssueComment, error) {
+	url := fmt.Sprintf("%s/repos/%s/%s/issues/%d/comments", apiBase, owner, repo, number)
+	payload, err := json.Marshal(struct {
+		Body string `json:"body"`
+	}{
+		Body: body,
+	})
+	if err != nil {
+		return nil, fmt.Errorf("failed to encode PR comment payload: %w", err)
+	}
+
+	var comment IssueComment
+	if err := apiPost(url, token, bytes.NewReader(payload), &comment); err != nil {
+		return nil, err
+	}
+	return &comment, nil
+}
+
+// GetCommitTimestamp fetches commit metadata and returns its timestamp.
+// It prefers committer date, falling back to author date when needed.
+func GetCommitTimestamp(owner, repo, sha, token string) (time.Time, error) {
+	url := fmt.Sprintf("%s/repos/%s/%s/commits/%s", apiBase, owner, repo, sha)
+	var commit Commit
+	if err := apiGet(url, token, &commit); err != nil {
+		return time.Time{}, err
+	}
+	if !commit.Commit.Committer.Date.IsZero() {
+		return commit.Commit.Committer.Date, nil
+	}
+	if !commit.Commit.Author.Date.IsZero() {
+		return commit.Commit.Author.Date, nil
+	}
+	return time.Time{}, fmt.Errorf("commit %s has no author/committer timestamp", sha)
 }
 
 // GetIssueCommentBodies fetches all issue comment bodies for a PR (paginated).
@@ -345,7 +432,7 @@ func apiGet(url, token string, dest interface{}) error {
 	req.Header.Set("Authorization", "Bearer "+token)
 	req.Header.Set("Accept", "application/vnd.github+json")
 
-	resp, err := http.DefaultClient.Do(req)
+	resp, err := apiHTTPClient.Do(req)
 	if err != nil {
 		return fmt.Errorf("HTTP request failed for %s: %w", url, err)
 	}
@@ -357,6 +444,37 @@ func apiGet(url, token string, dest interface{}) error {
 			return fmt.Errorf("GitHub API returned HTTP %d for %s (failed to read body: %v)", resp.StatusCode, url, readErr)
 		}
 		return fmt.Errorf("GitHub API returned HTTP %d for %s: %s", resp.StatusCode, url, string(body))
+	}
+
+	if err := json.NewDecoder(resp.Body).Decode(dest); err != nil {
+		return fmt.Errorf("failed to decode JSON from %s: %w", url, err)
+	}
+	return nil
+}
+
+// apiPost performs a POST request to the GitHub API with the given token and
+// decodes the JSON response into dest.
+func apiPost(url, token string, body io.Reader, dest interface{}) error {
+	req, err := http.NewRequest("POST", url, body)
+	if err != nil {
+		return fmt.Errorf("failed to create request for %s: %w", url, err)
+	}
+	req.Header.Set("Authorization", "Bearer "+token)
+	req.Header.Set("Accept", "application/vnd.github+json")
+	req.Header.Set("Content-Type", "application/json")
+
+	resp, err := apiHTTPClient.Do(req)
+	if err != nil {
+		return fmt.Errorf("HTTP request failed for %s: %w", url, err)
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode != http.StatusCreated && resp.StatusCode != http.StatusOK {
+		respBody, readErr := io.ReadAll(resp.Body)
+		if readErr != nil {
+			return fmt.Errorf("GitHub API returned HTTP %d for %s (failed to read body: %v)", resp.StatusCode, url, readErr)
+		}
+		return fmt.Errorf("GitHub API returned HTTP %d for %s: %s", resp.StatusCode, url, string(respBody))
 	}
 
 	if err := json.NewDecoder(resp.Body).Decode(dest); err != nil {

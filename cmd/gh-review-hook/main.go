@@ -1,6 +1,7 @@
 package main
 
 import (
+	"errors"
 	"fmt"
 	"net/url"
 	"os"
@@ -10,6 +11,7 @@ import (
 
 	"github.com/xpadev/gh-review-hook/internal/git"
 	"github.com/xpadev/gh-review-hook/internal/github"
+	"github.com/xpadev/gh-review-hook/internal/greptile"
 	"github.com/xpadev/gh-review-hook/internal/parser"
 )
 
@@ -80,29 +82,43 @@ func run() int {
 		return 1
 	}
 
-	// Step 7: Fetch PR comments
-	commentBodies, err := github.GetPRCommentBodies(owner, repo, pr.Number, token)
-	if err != nil {
-		fmt.Fprintf(os.Stderr, "failed to fetch PR comments: %v\n", err)
-		return 1
-	}
-
 	// Step 8: Parse Greptile review
 	confidenceSection, prompt, found := parser.ExtractGreptileReview(latestPR.Body)
-
-	// Step 9: Parse CodeRabbit prompts from comments
-	var codeRabbitPrompts []string
-	seenPrompts := make(map[string]bool)
-	for _, body := range commentBodies {
-		p := parser.ExtractCodeRabbitPrompt(body)
-		if p == "" || seenPrompts[p] {
-			continue
-		}
-		seenPrompts[p] = true
-		codeRabbitPrompts = append(codeRabbitPrompts, p)
+	lastReviewedCommit := parser.ExtractLastReviewedCommit(latestPR.Body)
+	if found && !parser.IsCommitReviewed(latestPR.Head.SHA, lastReviewedCommit) {
+		found = false
+		confidenceSection = ""
+		prompt = ""
 	}
 
-	// Step 10: Determine output and exit code
+	if !found {
+		// Prefer PR description mode first; some repositories still publish the
+		// canonical Greptile review in PR body updates.
+		reviewData, err := greptile.WaitForReviewInPRBody(owner, repo, pr.Number, latestPR.Head.SHA, token, os.Stdout)
+		if err != nil && !errors.Is(err, greptile.ErrReviewTimeout) {
+			fmt.Fprintln(os.Stderr, err.Error())
+			return 1
+		}
+		if reviewData == nil {
+			if errors.Is(err, greptile.ErrReviewTimeout) {
+				fmt.Fprintln(os.Stdout, "[Greptile] description review not found, falling back to comment mode")
+			}
+			reviewData, err = greptile.WaitForReview(owner, repo, pr.Number, latestPR.Head.SHA, token, os.Stdout)
+			if err != nil {
+				if !errors.Is(err, greptile.ErrReviewTimeout) {
+					fmt.Fprintln(os.Stderr, err.Error())
+					return 1
+				}
+			}
+		}
+		if reviewData != nil {
+			confidenceSection = reviewData.ConfidenceSection
+			prompt = reviewData.Prompt
+			found = reviewData.Found
+		}
+	}
+
+	// Step 9: Determine output and exit code
 	var feedbackParts []string
 
 	// Part 1: CI failures
@@ -126,6 +142,24 @@ func run() int {
 
 	if prompt != "" && !is5of5 {
 		feedbackParts = append(feedbackParts, prompt)
+	}
+
+	// Step 10: Fetch latest PR comments and parse CodeRabbit prompts
+	commentBodies, err := github.GetPRCommentBodies(owner, repo, pr.Number, token)
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "failed to fetch PR comments: %v\n", err)
+		return 1
+	}
+
+	var codeRabbitPrompts []string
+	seenPrompts := make(map[string]bool)
+	for _, body := range commentBodies {
+		p := parser.ExtractCodeRabbitPrompt(body)
+		if p == "" || seenPrompts[p] {
+			continue
+		}
+		seenPrompts[p] = true
+		codeRabbitPrompts = append(codeRabbitPrompts, p)
 	}
 
 	// CodeRabbit prompts are treated as actionable review comments independent of

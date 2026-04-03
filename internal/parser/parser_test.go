@@ -297,6 +297,125 @@ Fix this thing.
 	}
 }
 
+func TestExtractGreptileReviewComment_WithRawLastReviewedCommit(t *testing.T) {
+	body := `<h3>Greptile Summary</h3>
+
+Summary.
+
+<h3>Confidence Score: 4/5</h3>
+
+Needs updates.
+
+<details><summary>Prompt To Fix All With AI</summary>
+` + "````" + ` markdown
+Fix A.
+` + "````" + `
+</details>
+
+<sub>Last reviewed commit: abcdef1234567890</sub>`
+
+	got := ExtractGreptileReviewComment(body)
+	if !got.Found {
+		t.Fatal("expected found=true")
+	}
+	if !strings.Contains(got.ConfidenceSection, "4/5") {
+		t.Errorf("confidence should include 4/5, got %q", got.ConfidenceSection)
+	}
+	if !strings.Contains(got.Prompt, "Fix A.") {
+		t.Errorf("prompt should include Fix A., got %q", got.Prompt)
+	}
+	if got.LastReviewedCommit != "abcdef1234567890" {
+		t.Errorf("last reviewed commit = %q, want %q", got.LastReviewedCommit, "abcdef1234567890")
+	}
+}
+
+func TestExtractGreptileReviewComment_WithCommitLink(t *testing.T) {
+	body := `<h3>Confidence Score: 5/5</h3>
+Safe to merge.
+<sub>Reviews (1): Last reviewed commit: ["msg"](https://github.com/o/r/commit/4D245E21138C010B523CDF1408C6272D4658C783)</sub>`
+
+	got := ExtractGreptileReviewComment(body)
+	if !got.Found {
+		t.Fatal("expected found=true")
+	}
+	if got.LastReviewedCommit != "4d245e21138c010b523cdf1408c6272d4658c783" {
+		t.Errorf("last reviewed commit = %q", got.LastReviewedCommit)
+	}
+}
+
+func TestExtractGreptileReviewComment_OnlyLastReviewedCommitNotFound(t *testing.T) {
+	body := `<sub>Last reviewed commit: abcdef1234567890</sub>`
+	got := ExtractGreptileReviewComment(body)
+	if got.Found {
+		t.Fatal("expected found=false when only last reviewed commit exists")
+	}
+	if got.LastReviewedCommit != "abcdef1234567890" {
+		t.Errorf("last reviewed commit = %q", got.LastReviewedCommit)
+	}
+}
+
+func TestExtractGreptileReviewComment_NotGreptile(t *testing.T) {
+	body := `Normal user comment`
+	got := ExtractGreptileReviewComment(body)
+	if got.Found {
+		t.Fatal("expected found=false")
+	}
+}
+
+func TestExtractLastReviewedCommit_NoMatch(t *testing.T) {
+	if got := ExtractLastReviewedCommit("no commit marker"); got != "" {
+		t.Errorf("expected empty, got %q", got)
+	}
+}
+
+func TestIsCommitReviewed(t *testing.T) {
+	tests := []struct {
+		name     string
+		current  string
+		reviewed string
+		want     bool
+	}{
+		{
+			name:     "full sha exact",
+			current:  "abcdef123456",
+			reviewed: "abcdef123456",
+			want:     true,
+		},
+		{
+			name:     "short sha prefix",
+			current:  "abcdef123456",
+			reviewed: "abcdef1",
+			want:     true,
+		},
+		{
+			name:     "case insensitive",
+			current:  "AbCdEf123456",
+			reviewed: "abcdef1",
+			want:     true,
+		},
+		{
+			name:     "different sha",
+			current:  "abcdef123456",
+			reviewed: "1234567",
+			want:     false,
+		},
+		{
+			name:     "empty reviewed",
+			current:  "abcdef123456",
+			reviewed: "",
+			want:     false,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			if got := IsCommitReviewed(tt.current, tt.reviewed); got != tt.want {
+				t.Errorf("IsCommitReviewed(%q, %q) = %v, want %v", tt.current, tt.reviewed, got, tt.want)
+			}
+		})
+	}
+}
+
 func TestExtractCodeRabbitPrompt_AllReviewCommentsHeading(t *testing.T) {
 	body := `
 <details>
