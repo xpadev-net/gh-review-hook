@@ -80,10 +80,29 @@ func run() int {
 		return 1
 	}
 
-	// Step 7: Parse Greptile review
+	// Step 7: Fetch PR comments
+	commentBodies, err := github.GetPRCommentBodies(owner, repo, pr.Number, token)
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "failed to fetch PR comments: %v\n", err)
+		return 1
+	}
+
+	// Step 8: Parse Greptile review
 	confidenceSection, prompt, found := parser.ExtractGreptileReview(latestPR.Body)
 
-	// Step 8: Determine output and exit code
+	// Step 9: Parse CodeRabbit prompts from comments
+	var codeRabbitPrompts []string
+	seenPrompts := make(map[string]bool)
+	for _, body := range commentBodies {
+		p := parser.ExtractCodeRabbitPrompt(body)
+		if p == "" || seenPrompts[p] {
+			continue
+		}
+		seenPrompts[p] = true
+		codeRabbitPrompts = append(codeRabbitPrompts, p)
+	}
+
+	// Step 10: Determine output and exit code
 	var feedbackParts []string
 
 	// Part 1: CI failures
@@ -107,6 +126,12 @@ func run() int {
 
 	if prompt != "" && !is5of5 {
 		feedbackParts = append(feedbackParts, prompt)
+	}
+
+	// CodeRabbit prompts are treated as actionable review comments independent of
+	// Greptile's confidence score, so they are not gated by is5of5.
+	for _, p := range codeRabbitPrompts {
+		feedbackParts = append(feedbackParts, p)
 	}
 
 	if len(feedbackParts) > 0 {
