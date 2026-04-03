@@ -388,6 +388,27 @@ This should be included in the output.
 	}
 }
 
+func TestExtractCodeRabbitPrompt_DoesNotMatchNestedInNonMatchingBlock(t *testing.T) {
+	body := `
+<details>
+<summary>Walkthrough</summary>
+<details>
+<summary>🤖 Prompt for all review comments with AI agents</summary>
+Nested prompt that should be ignored.
+</details>
+</details>
+
+<details>
+<summary>🤖 Prompt for AI Agents</summary>
+Top-level prompt that should be returned.
+</details>`
+
+	got := ExtractCodeRabbitPrompt(body)
+	if got != "Top-level prompt that should be returned." {
+		t.Fatalf("got %q, want top-level prompt", got)
+	}
+}
+
 func min(a, b int) int {
 	if a < b {
 		return a

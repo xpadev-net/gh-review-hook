@@ -26,13 +26,8 @@ type PR struct {
 	} `json:"head"`
 }
 
-// IssueComment represents a GitHub issue comment (used for PR timeline comments).
-type IssueComment struct {
-	Body string `json:"body"`
-}
-
-// ReviewComment represents a GitHub pull request review comment.
-type ReviewComment struct {
+// commentBody is a minimal representation of GitHub comments used by this tool.
+type commentBody struct {
 	Body string `json:"body"`
 }
 
@@ -90,7 +85,7 @@ func GetIssueCommentBodies(owner, repo string, number int, token string) ([]stri
 	page := 1
 	for {
 		url := fmt.Sprintf("%s/repos/%s/%s/issues/%d/comments?per_page=100&page=%d", apiBase, owner, repo, number, page)
-		var comments []IssueComment
+		var comments []commentBody
 		if err := apiGet(url, token, &comments); err != nil {
 			return nil, err
 		}
@@ -113,7 +108,7 @@ func GetReviewCommentBodies(owner, repo string, number int, token string) ([]str
 	page := 1
 	for {
 		url := fmt.Sprintf("%s/repos/%s/%s/pulls/%d/comments?per_page=100&page=%d", apiBase, owner, repo, number, page)
-		var comments []ReviewComment
+		var comments []commentBody
 		if err := apiGet(url, token, &comments); err != nil {
 			return nil, err
 		}

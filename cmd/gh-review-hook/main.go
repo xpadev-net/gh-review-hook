@@ -128,6 +128,8 @@ func run() int {
 		feedbackParts = append(feedbackParts, prompt)
 	}
 
+	// CodeRabbit prompts are treated as actionable review comments independent of
+	// Greptile's confidence score, so they are not gated by is5of5.
 	for _, p := range codeRabbitPrompts {
 		feedbackParts = append(feedbackParts, p)
 	}

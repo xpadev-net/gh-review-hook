@@ -80,7 +80,12 @@ func extractDetailsSectionContent(body, heading string) string {
 
 		summaryContent := strings.TrimSpace(body[summaryIdx+len(summaryStart) : summaryCloseIdx])
 		if !strings.Contains(strings.ToLower(summaryContent), strings.ToLower(heading)) {
-			searchFrom = summaryCloseIdx + len(summaryEnd)
+			contentStart := summaryCloseIdx + len(summaryEnd)
+			closeIdx := findMatchingDetailsClose(body[contentStart:])
+			if closeIdx < 0 {
+				return ""
+			}
+			searchFrom = contentStart + closeIdx + len(detailsClose)
 			continue
 		}
 
