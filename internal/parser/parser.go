@@ -12,6 +12,9 @@ const (
 	failedStart   = "<!-- greptile_failed_comments -->"
 	promptAllOpen = "<details><summary>Prompt To Fix All With AI</summary>"
 	detailsClose  = "</details>"
+
+	codeRabbitPromptHeading = "Prompt for all review comments with AI agents"
+	codeRabbitCompatHeading = "Prompt for AI Agents"
 )
 
 // ExtractGreptileReview parses a PR body and returns the Confidence Score
@@ -35,6 +38,100 @@ func ExtractGreptileReview(body string) (confidenceSection string, prompt string
 	prompt = extractPromptAll(block)
 
 	return confidenceSection, prompt, true
+}
+
+// ExtractCodeRabbitPrompt extracts the "Prompt for all review comments with AI agents"
+// content from a CodeRabbit comment body.
+// It supports both the current heading and legacy "Prompt for AI Agents" heading.
+func ExtractCodeRabbitPrompt(body string) string {
+	// Prefer the explicit "all review comments" heading.
+	prompt := extractDetailsSectionContent(body, codeRabbitPromptHeading)
+	if prompt != "" {
+		return prompt
+	}
+	// Backward compatibility with older CodeRabbit heading.
+	return extractDetailsSectionContent(body, codeRabbitCompatHeading)
+}
+
+func extractDetailsSectionContent(body, heading string) string {
+	openTag := "<details"
+	summaryStart := "<summary>"
+	summaryEnd := "</summary>"
+
+	searchFrom := 0
+	for {
+		detailsIdx := strings.Index(body[searchFrom:], openTag)
+		if detailsIdx < 0 {
+			return ""
+		}
+		detailsIdx += searchFrom
+
+		summaryIdx := strings.Index(body[detailsIdx:], summaryStart)
+		if summaryIdx < 0 {
+			return ""
+		}
+		summaryIdx += detailsIdx
+
+		summaryCloseIdx := strings.Index(body[summaryIdx:], summaryEnd)
+		if summaryCloseIdx < 0 {
+			return ""
+		}
+		summaryCloseIdx += summaryIdx
+
+		summaryContent := strings.TrimSpace(body[summaryIdx+len(summaryStart) : summaryCloseIdx])
+		if !strings.Contains(strings.ToLower(summaryContent), strings.ToLower(heading)) {
+			searchFrom = summaryCloseIdx + len(summaryEnd)
+			continue
+		}
+
+		contentStart := summaryCloseIdx + len(summaryEnd)
+		rest := body[contentStart:]
+		closeIdx := findMatchingDetailsClose(rest)
+		if closeIdx < 0 {
+			return ""
+		}
+
+		content := strings.TrimSpace(rest[:closeIdx])
+		content = stripFencedCodeBlock(content)
+		return strings.TrimSpace(content)
+	}
+}
+
+// findMatchingDetailsClose finds the closing </details> for an outer <details> block.
+// The input must start from immediately after the outer <summary>...</summary>.
+func findMatchingDetailsClose(s string) int {
+	const detailsOpenPrefix = "<details"
+
+	depth := 1
+	pos := 0
+	for {
+		nextOpen := strings.Index(s[pos:], detailsOpenPrefix)
+		if nextOpen >= 0 {
+			nextOpen += pos
+		}
+
+		nextClose := strings.Index(s[pos:], detailsClose)
+		if nextClose < 0 {
+			return -1
+		}
+		nextClose += pos
+
+		if nextOpen >= 0 && nextOpen < nextClose {
+			endOfOpen := strings.Index(s[nextOpen:], ">")
+			if endOfOpen < 0 {
+				return -1
+			}
+			depth++
+			pos = nextOpen + endOfOpen + 1
+			continue
+		}
+
+		depth--
+		if depth == 0 {
+			return nextClose
+		}
+		pos = nextClose + len(detailsClose)
+	}
 }
 
 // extractConfidenceSection extracts everything from <h3>Confidence Score:
