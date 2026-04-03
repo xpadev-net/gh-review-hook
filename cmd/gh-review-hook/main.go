@@ -90,9 +90,11 @@ func run() int {
 			fmt.Fprintln(os.Stderr, err.Error())
 			return 1
 		}
-		confidenceSection = reviewData.ConfidenceSection
-		prompt = reviewData.Prompt
-		found = reviewData.Found
+		if reviewData != nil {
+			confidenceSection = reviewData.ConfidenceSection
+			prompt = reviewData.Prompt
+			found = reviewData.Found
+		}
 	}
 
 	// Step 8: Determine output and exit code

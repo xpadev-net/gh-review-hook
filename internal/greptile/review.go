@@ -30,6 +30,16 @@ var (
 	nowFn             = time.Now
 )
 
+var allowedBotLogins = map[string]struct{}{
+	"greptile-apps[bot]": {},
+	"greptile-apps":      {},
+}
+
+type reviewObservation struct {
+	data      parser.ReviewData
+	timestamp time.Time
+}
+
 // WaitForReview waits until a Greptile review comment exists for the current
 // HEAD commit. If no up-to-date review exists, it triggers one by posting
 // "@greptile review" once and then polls PR comments/reactions.
@@ -63,13 +73,14 @@ func waitForReview(owner, repo string, prNumber int, headSHA, token string, logw
 			return nil, fmt.Errorf("failed to fetch PR comments: %w", err)
 		}
 
-		latestReview, _ := inspectComments(comments, time.Time{})
-		reviewCurrent := latestReview != nil && parser.IsCommitReviewed(headSHA, latestReview.LastReviewedCommit)
+		_, _, allReviews := inspectCommentsDetailed(comments, time.Time{})
+		matchingReview := latestMatchingReview(allReviews, headSHA)
+		reviewCurrent := matchingReview != nil
 		minTimestamp := headCommitTime
 		if !triggerAt.IsZero() && triggerAt.After(minTimestamp) {
 			minTimestamp = triggerAt
 		}
-		_, state := inspectComments(comments, minTimestamp)
+		_, state, _ := inspectCommentsDetailed(comments, minTimestamp)
 		if state != prevState {
 			switch state {
 			case reactionStateInProgress:
@@ -81,7 +92,7 @@ func waitForReview(owner, repo string, prNumber int, headSHA, token string, logw
 		}
 
 		if reviewCurrent {
-			return latestReview, nil
+			return matchingReview, nil
 		}
 
 		if !triggered && !reviewCurrent && state != reactionStateInProgress {
@@ -105,19 +116,25 @@ func waitForReview(owner, repo string, prNumber int, headSHA, token string, logw
 }
 
 func inspectComments(comments []github.IssueComment, minTimestamp time.Time) (*parser.ReviewData, string) {
+	latestReview, state, _ := inspectCommentsDetailed(comments, minTimestamp)
+	return latestReview, state
+}
+
+func inspectCommentsDetailed(comments []github.IssueComment, minTimestamp time.Time) (*parser.ReviewData, string, []reviewObservation) {
 	var (
 		latestReviewData   *parser.ReviewData
 		latestReviewUpdate time.Time
 
 		latestStatusUpdate time.Time
 		status             = reactionStateIdle
+
+		reviews []reviewObservation
 	)
 
 	for i := range comments {
 		comment := comments[i]
-		login := strings.ToLower(comment.User.Login)
 		body := strings.TrimSpace(comment.Body)
-		isGreptileActor := strings.Contains(login, "greptile")
+		isGreptileActor := isAllowedGreptileActor(comment.User.Login)
 		isTriggerComment := strings.EqualFold(body, triggerCommentBody)
 		ts := commentTimestamp(comment)
 		if !minTimestamp.IsZero() && ts.Before(minTimestamp) {
@@ -144,6 +161,7 @@ func inspectComments(comments []github.IssueComment, minTimestamp time.Time) (*p
 		if !review.Found {
 			continue
 		}
+		reviews = append(reviews, reviewObservation{data: review, timestamp: ts})
 		if latestReviewData == nil || ts.After(latestReviewUpdate) {
 			reviewCopy := review
 			latestReviewData = &reviewCopy
@@ -151,7 +169,7 @@ func inspectComments(comments []github.IssueComment, minTimestamp time.Time) (*p
 		}
 	}
 
-	return latestReviewData, status
+	return latestReviewData, status, reviews
 }
 
 func commentTimestamp(comment github.IssueComment) time.Time {
@@ -159,4 +177,28 @@ func commentTimestamp(comment github.IssueComment) time.Time {
 		return comment.UpdatedAt
 	}
 	return comment.CreatedAt
+}
+
+func isAllowedGreptileActor(login string) bool {
+	_, ok := allowedBotLogins[strings.ToLower(strings.TrimSpace(login))]
+	return ok
+}
+
+func latestMatchingReview(observations []reviewObservation, headSHA string) *parser.ReviewData {
+	var (
+		matched *parser.ReviewData
+		latest  time.Time
+	)
+	for i := range observations {
+		obs := observations[i]
+		if !parser.IsCommitReviewed(headSHA, obs.data.LastReviewedCommit) {
+			continue
+		}
+		if matched == nil || obs.timestamp.After(latest) {
+			copy := obs.data
+			matched = &copy
+			latest = obs.timestamp
+		}
+	}
+	return matched
 }

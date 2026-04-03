@@ -10,6 +10,7 @@ import (
 )
 
 var apiBase = "https://api.github.com"
+var apiHTTPClient = &http.Client{Timeout: 30 * time.Second}
 
 const (
 	pollInterval     = 15 * time.Second
@@ -367,7 +368,7 @@ func apiGet(url, token string, dest interface{}) error {
 	req.Header.Set("Authorization", "Bearer "+token)
 	req.Header.Set("Accept", "application/vnd.github+json")
 
-	resp, err := http.DefaultClient.Do(req)
+	resp, err := apiHTTPClient.Do(req)
 	if err != nil {
 		return fmt.Errorf("HTTP request failed for %s: %w", url, err)
 	}
@@ -398,7 +399,7 @@ func apiPost(url, token string, body io.Reader, dest interface{}) error {
 	req.Header.Set("Accept", "application/vnd.github+json")
 	req.Header.Set("Content-Type", "application/json")
 
-	resp, err := http.DefaultClient.Do(req)
+	resp, err := apiHTTPClient.Do(req)
 	if err != nil {
 		return fmt.Errorf("HTTP request failed for %s: %w", url, err)
 	}

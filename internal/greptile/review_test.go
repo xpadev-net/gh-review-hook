@@ -7,6 +7,7 @@ import (
 	"time"
 
 	"github.com/xpadev/gh-review-hook/internal/github"
+	"github.com/xpadev/gh-review-hook/internal/parser"
 )
 
 func TestInspectComments_PrefersLatestGreptileReview(t *testing.T) {
@@ -38,6 +39,56 @@ func TestInspectComments_PrefersLatestGreptileReview(t *testing.T) {
 	}
 	if state != reactionStateReviewed {
 		t.Errorf("state = %q, want %q", state, reactionStateReviewed)
+	}
+}
+
+func TestInspectComments_RejectsSpoofedGreptileLogin(t *testing.T) {
+	comments := []github.IssueComment{
+		{
+			Body:      "<h3>Confidence Score: 5/5</h3><sub>Last reviewed commit: abcdef1</sub>",
+			UpdatedAt: time.Date(2026, 4, 1, 11, 0, 0, 0, time.UTC),
+			User: struct {
+				Login string `json:"login"`
+			}{Login: "notgreptile-user"},
+			Reactions: github.CommentReactions{PlusOne: 1},
+		},
+	}
+
+	review, state := inspectComments(comments, time.Time{})
+	if review != nil {
+		t.Fatalf("expected spoofed actor review to be ignored, got %+v", review)
+	}
+	if state != reactionStateIdle {
+		t.Errorf("state = %q, want %q", state, reactionStateIdle)
+	}
+}
+
+func TestLatestMatchingReview_SelectsMatchingCommitEvenIfNotLatestOverall(t *testing.T) {
+	obs := []reviewObservation{
+		{
+			data: parser.ReviewData{
+				ConfidenceSection:  "<h3>Confidence Score: 5/5</h3>",
+				LastReviewedCommit: "abcdef1",
+				Found:              true,
+			},
+			timestamp: time.Date(2026, 4, 1, 12, 0, 0, 0, time.UTC),
+		},
+		{
+			data: parser.ReviewData{
+				ConfidenceSection:  "<h3>Confidence Score: 3/5</h3>",
+				LastReviewedCommit: "deadbee",
+				Found:              true,
+			},
+			timestamp: time.Date(2026, 4, 1, 12, 1, 0, 0, time.UTC),
+		},
+	}
+
+	got := latestMatchingReview(obs, "abcdef123456")
+	if got == nil {
+		t.Fatal("expected matching review")
+	}
+	if got.LastReviewedCommit != "abcdef1" {
+		t.Errorf("last reviewed commit = %q, want abcdef1", got.LastReviewedCommit)
 	}
 }
 

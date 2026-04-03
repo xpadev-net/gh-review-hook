@@ -343,6 +343,17 @@ Safe to merge.
 	}
 }
 
+func TestExtractGreptileReviewComment_OnlyLastReviewedCommitNotFound(t *testing.T) {
+	body := `<sub>Last reviewed commit: abcdef1234567890</sub>`
+	got := ExtractGreptileReviewComment(body)
+	if got.Found {
+		t.Fatal("expected found=false when only last reviewed commit exists")
+	}
+	if got.LastReviewedCommit != "abcdef1234567890" {
+		t.Errorf("last reviewed commit = %q", got.LastReviewedCommit)
+	}
+}
+
 func TestExtractGreptileReviewComment_NotGreptile(t *testing.T) {
 	body := `Normal user comment`
 	got := ExtractGreptileReviewComment(body)

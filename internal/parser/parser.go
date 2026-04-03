@@ -60,7 +60,7 @@ func ExtractGreptileReviewComment(body string) ReviewData {
 	prompt := extractPromptAll(body)
 	last := ExtractLastReviewedCommit(body)
 
-	found := confidence != "" || prompt != "" || last != ""
+	found := confidence != "" || prompt != ""
 	return ReviewData{
 		ConfidenceSection:  confidence,
 		Prompt:             prompt,
