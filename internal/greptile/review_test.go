@@ -1,6 +1,7 @@
 package greptile
 
 import (
+	"errors"
 	"fmt"
 	"strings"
 	"testing"
@@ -689,5 +690,74 @@ func TestWaitForReview_HeadCommitTimeFailure(t *testing.T) {
 	}
 	if !strings.Contains(err.Error(), "failed to fetch head commit timestamp") {
 		t.Fatalf("unexpected error: %v", err)
+	}
+}
+
+func TestWaitForReviewInPRBody_ReturnsMatchingDescriptionReview(t *testing.T) {
+	originalGetPR := getPRFn
+	originalSleep := sleepFn
+	originalNow := nowFn
+	t.Cleanup(func() {
+		getPRFn = originalGetPR
+		sleepFn = originalSleep
+		nowFn = originalNow
+	})
+
+	getPRFn = func(owner, repo string, number int, token string) (*github.PR, error) {
+		pr := &github.PR{}
+		pr.Body = `<!-- greptile_comment -->
+<h3>Confidence Score: 4/5</h3>
+Needs updates.
+<details><summary>Prompt To Fix All With AI</summary>Fix it</details>
+<sub>Last reviewed commit: abcdef1</sub>
+<!-- /greptile_comment -->`
+		return pr, nil
+	}
+	sleepFn = func(d time.Duration) {}
+	nowFn = func() time.Time { return time.Date(2026, 4, 1, 12, 0, 0, 0, time.UTC) }
+
+	review, err := waitForReviewInPRBody("owner", "repo", 1, "abcdef1234567890", "token", nil, time.Millisecond, time.Second)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if review == nil || !review.Found {
+		t.Fatal("expected review result")
+	}
+	if review.LastReviewedCommit != "abcdef1" {
+		t.Fatalf("last reviewed commit = %q, want %q", review.LastReviewedCommit, "abcdef1")
+	}
+}
+
+func TestWaitForReviewInPRBody_TimesOutWhenNoMatchingCommit(t *testing.T) {
+	originalGetPR := getPRFn
+	originalSleep := sleepFn
+	originalNow := nowFn
+	t.Cleanup(func() {
+		getPRFn = originalGetPR
+		sleepFn = originalSleep
+		nowFn = originalNow
+	})
+
+	getPRFn = func(owner, repo string, number int, token string) (*github.PR, error) {
+		pr := &github.PR{}
+		pr.Body = `<!-- greptile_comment -->
+<h3>Confidence Score: 5/5</h3>
+<sub>Last reviewed commit: deadbee</sub>
+<!-- /greptile_comment -->`
+		return pr, nil
+	}
+	sleepFn = func(d time.Duration) {}
+	tick := 0
+	nowFn = func() time.Time {
+		tick++
+		return time.Date(2026, 4, 1, 12, 0, tick, 0, time.UTC)
+	}
+
+	_, err := waitForReviewInPRBody("owner", "repo", 1, "abcdef1234567890", "token", nil, time.Millisecond, 2*time.Second)
+	if err == nil {
+		t.Fatal("expected timeout error")
+	}
+	if !errors.Is(err, ErrReviewTimeout) {
+		t.Fatalf("expected ErrReviewTimeout, got %v", err)
 	}
 }

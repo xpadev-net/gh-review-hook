@@ -1,6 +1,7 @@
 package greptile
 
 import (
+	"errors"
 	"fmt"
 	"io"
 	"strings"
@@ -23,6 +24,7 @@ const (
 )
 
 var (
+	getPRFn           = github.GetPR
 	getPRCommentsFn   = github.GetPRComments
 	createPRCommentFn = github.CreatePRComment
 	getCommitTimeFn   = github.GetCommitTimestamp
@@ -32,8 +34,9 @@ var (
 
 var allowedBotLogins = map[string]struct{}{
 	"greptile-apps[bot]": {},
-	"greptile-apps":      {},
 }
+
+var ErrReviewTimeout = errors.New("timed out waiting for Greptile review")
 
 type reviewObservation struct {
 	data      parser.ReviewData
@@ -45,6 +48,48 @@ type reviewObservation struct {
 // "@greptile review" once and then polls PR comments/reactions.
 func WaitForReview(owner, repo string, prNumber int, headSHA, token string, logw io.Writer) (*parser.ReviewData, error) {
 	return waitForReview(owner, repo, prNumber, headSHA, token, logw, reviewPollInterval, reviewPollTimeout)
+}
+
+// WaitForReviewInPRBody waits for a Greptile review in PR description that
+// matches the current HEAD commit via "Last reviewed commit".
+func WaitForReviewInPRBody(owner, repo string, prNumber int, headSHA, token string, logw io.Writer) (*parser.ReviewData, error) {
+	return waitForReviewInPRBody(owner, repo, prNumber, headSHA, token, logw, reviewPollInterval, reviewPollTimeout)
+}
+
+func waitForReviewInPRBody(owner, repo string, prNumber int, headSHA, token string, logw io.Writer, pollInterval, pollTimeout time.Duration) (*parser.ReviewData, error) {
+	logf := func(format string, a ...any) {
+		if logw != nil {
+			fmt.Fprintf(logw, format, a...)
+		}
+	}
+
+	start := nowFn()
+	for {
+		if nowFn().Sub(start) > pollTimeout {
+			return nil, fmt.Errorf("%w after %s waiting for Greptile review in PR description", ErrReviewTimeout, pollTimeout)
+		}
+
+		pr, err := getPRFn(owner, repo, prNumber, token)
+		if err != nil {
+			return nil, fmt.Errorf("failed to fetch PR while waiting for Greptile description review: %w", err)
+		}
+
+		confidence, prompt, found := parser.ExtractGreptileReview(pr.Body)
+		if found {
+			lastReviewedCommit := parser.ExtractLastReviewedCommit(pr.Body)
+			if parser.IsCommitReviewed(headSHA, lastReviewedCommit) {
+				return &parser.ReviewData{
+					ConfidenceSection:  confidence,
+					Prompt:             prompt,
+					LastReviewedCommit: lastReviewedCommit,
+					Found:              true,
+				}, nil
+			}
+		}
+
+		logf("[Greptile] waiting for PR description review update\n")
+		sleepFn(pollInterval)
+	}
 }
 
 func waitForReview(owner, repo string, prNumber int, headSHA, token string, logw io.Writer, pollInterval, pollTimeout time.Duration) (*parser.ReviewData, error) {
@@ -66,7 +111,7 @@ func waitForReview(owner, repo string, prNumber int, headSHA, token string, logw
 
 	for {
 		if nowFn().Sub(start) > pollTimeout {
-			return nil, fmt.Errorf("timed out after %s waiting for Greptile review on latest commit", pollTimeout)
+			return nil, fmt.Errorf("%w after %s waiting for Greptile review on latest commit", ErrReviewTimeout, pollTimeout)
 		}
 
 		comments, err := getPRCommentsFn(owner, repo, prNumber, token)
@@ -95,7 +140,7 @@ func waitForReview(owner, repo string, prNumber int, headSHA, token string, logw
 			return matchingReview, nil
 		}
 
-		if !triggered && !reviewCurrent {
+		if !triggered {
 			posted, err := createPRCommentFn(owner, repo, prNumber, triggerCommentBody, token)
 			if err != nil {
 				return nil, fmt.Errorf("failed to trigger Greptile review: %w", err)
@@ -114,11 +159,6 @@ func waitForReview(owner, repo string, prNumber int, headSHA, token string, logw
 
 		sleepFn(pollInterval)
 	}
-}
-
-func inspectComments(comments []github.IssueComment, minTimestamp time.Time) (*parser.ReviewData, string) {
-	latestReview, state, _ := inspectCommentsDetailed(comments, minTimestamp)
-	return latestReview, state
 }
 
 func inspectCommentsDetailed(comments []github.IssueComment, minTimestamp time.Time) (*parser.ReviewData, string, []reviewObservation) {
@@ -207,8 +247,8 @@ func latestMatchingReview(observations []reviewObservation, headSHA string) *par
 			continue
 		}
 		if matched == nil || obs.timestamp.After(latest) {
-			copy := obs.data
-			matched = &copy
+			rd := obs.data
+			matched = &rd
 			latest = obs.timestamp
 		}
 	}

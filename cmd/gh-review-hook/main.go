@@ -1,6 +1,7 @@
 package main
 
 import (
+	"errors"
 	"fmt"
 	"net/url"
 	"os"
@@ -85,10 +86,21 @@ func run() int {
 	confidenceSection, prompt, found := parser.ExtractGreptileReview(latestPR.Body)
 
 	if !found {
-		reviewData, err := greptile.WaitForReview(owner, repo, pr.Number, latestPR.Head.SHA, token, os.Stdout)
-		if err != nil {
+		// Prefer PR description mode first; some repositories still publish the
+		// canonical Greptile review in PR body updates.
+		reviewData, err := greptile.WaitForReviewInPRBody(owner, repo, pr.Number, latestPR.Head.SHA, token, os.Stdout)
+		if err != nil && !errors.Is(err, greptile.ErrReviewTimeout) {
 			fmt.Fprintln(os.Stderr, err.Error())
 			return 1
+		}
+		if reviewData == nil {
+			reviewData, err = greptile.WaitForReview(owner, repo, pr.Number, latestPR.Head.SHA, token, os.Stdout)
+			if err != nil {
+				if !errors.Is(err, greptile.ErrReviewTimeout) {
+					fmt.Fprintln(os.Stderr, err.Error())
+					return 1
+				}
+			}
 		}
 		if reviewData != nil {
 			confidenceSection = reviewData.ConfidenceSection
