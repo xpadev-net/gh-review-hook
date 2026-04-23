@@ -145,16 +145,35 @@ func run() int {
 	}
 
 	// Step 10: Fetch latest PR comments and parse CodeRabbit prompts
-	commentBodies, err := github.GetPRCommentBodies(owner, repo, pr.Number, token)
+	headCommitTime, err := github.GetCommitTimestamp(owner, repo, latestPR.Head.SHA, token)
 	if err != nil {
-		fmt.Fprintf(os.Stderr, "failed to fetch PR comments: %v\n", err)
+		fmt.Fprintf(os.Stderr, "failed to fetch head commit timestamp: %v\n", err)
 		return 1
 	}
 
+	issueComments, err := github.GetPRComments(owner, repo, latestPR.Number, token)
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "failed to fetch PR issue comments: %v\n", err)
+		return 1
+	}
+	reviewComments, err := github.GetReviewComments(owner, repo, latestPR.Number, token)
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "failed to fetch PR review comments: %v\n", err)
+		return 1
+	}
+	allComments := append(issueComments, reviewComments...)
+
 	var codeRabbitPrompts []string
 	seenPrompts := make(map[string]bool)
-	for _, body := range commentBodies {
-		p := parser.ExtractCodeRabbitPrompt(body)
+	for _, comment := range allComments {
+		commentTime := comment.CreatedAt
+		if comment.UpdatedAt.After(commentTime) {
+			commentTime = comment.UpdatedAt
+		}
+		if commentTime.Before(headCommitTime) {
+			continue
+		}
+		p := parser.ExtractCodeRabbitPrompt(comment.Body)
 		if p == "" || seenPrompts[p] {
 			continue
 		}
