@@ -121,7 +121,10 @@ func TestMergeHook_IdempotentExactPath(t *testing.T) {
 		t.Fatalf("first install error: %v", err)
 	}
 
-	fi1, _ := os.Stat(path)
+	fi1, err := os.Stat(path)
+	if err != nil {
+		t.Fatalf("stat after first install: %v", err)
+	}
 	alreadyInstalled, err := mergeHook(path, "/usr/bin/gh-review-hook")
 	if err != nil {
 		t.Fatalf("second install error: %v", err)
@@ -129,7 +132,10 @@ func TestMergeHook_IdempotentExactPath(t *testing.T) {
 	if !alreadyInstalled {
 		t.Fatal("expected alreadyInstalled=true on second call")
 	}
-	fi2, _ := os.Stat(path)
+	fi2, err := os.Stat(path)
+	if err != nil {
+		t.Fatalf("stat after second install: %v", err)
+	}
 	if fi1.ModTime() != fi2.ModTime() {
 		t.Fatal("file was modified despite already being installed")
 	}
