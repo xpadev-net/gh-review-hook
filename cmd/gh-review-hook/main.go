@@ -24,6 +24,10 @@ func main() {
 }
 
 func run() int {
+	if len(os.Args) > 1 && os.Args[1] == "install" {
+		return runInstall()
+	}
+
 	// Step 1: Check working tree cleanliness
 	noUpstream, err := git.EnsureClean()
 	if err != nil {
