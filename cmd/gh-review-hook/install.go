@@ -137,7 +137,7 @@ func mergeHook(path, binaryPath string) (bool, error) {
 
 	mode := os.FileMode(0o600)
 	if fi, err := os.Stat(path); err == nil {
-		mode = fi.Mode()
+		mode = fi.Mode().Perm()
 	}
 
 	tmpPath := path + ".tmp"

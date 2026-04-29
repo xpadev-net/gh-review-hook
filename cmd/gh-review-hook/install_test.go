@@ -75,7 +75,9 @@ func TestMergeHook_PreservesExistingFields(t *testing.T) {
 	dir := t.TempDir()
 	path := filepath.Join(dir, "settings.json")
 	existing := `{"permissions":{"allow":["Bash"]},"model":"claude-opus-4-5"}`
-	os.WriteFile(path, []byte(existing), 0o600)
+	if err := os.WriteFile(path, []byte(existing), 0o600); err != nil {
+		t.Fatalf("write fixture: %v", err)
+	}
 
 	_, err := mergeHook(path, "/usr/bin/gh-review-hook")
 	if err != nil {
@@ -99,7 +101,9 @@ func TestMergeHook_AppendsToExistingStop(t *testing.T) {
 	dir := t.TempDir()
 	path := filepath.Join(dir, "settings.json")
 	existing := `{"hooks":{"Stop":[{"hooks":[{"type":"command","command":"/other/hook"}]}]}}`
-	os.WriteFile(path, []byte(existing), 0o600)
+	if err := os.WriteFile(path, []byte(existing), 0o600); err != nil {
+		t.Fatalf("write fixture: %v", err)
+	}
 
 	_, err := mergeHook(path, "/usr/bin/gh-review-hook")
 	if err != nil {
@@ -174,7 +178,9 @@ func TestMergeHook_MalformedStopEntrySkipped(t *testing.T) {
 	path := filepath.Join(dir, "settings.json")
 	// hooks array contains a malformed entry (hooks is a string, not array)
 	existing := `{"hooks":{"Stop":[{"hooks":"not-an-array"}]}}`
-	os.WriteFile(path, []byte(existing), 0o600)
+	if err := os.WriteFile(path, []byte(existing), 0o600); err != nil {
+		t.Fatalf("write fixture: %v", err)
+	}
 
 	alreadyInstalled, err := mergeHook(path, "/usr/bin/gh-review-hook")
 	if err != nil {
@@ -193,7 +199,9 @@ func TestMergeHook_PreservesOtherHookEvents(t *testing.T) {
 	dir := t.TempDir()
 	path := filepath.Join(dir, "settings.json")
 	existing := `{"hooks":{"PreToolUse":[{"hooks":[{"type":"command","command":"/pre/hook"}]}]}}`
-	os.WriteFile(path, []byte(existing), 0o600)
+	if err := os.WriteFile(path, []byte(existing), 0o600); err != nil {
+		t.Fatalf("write fixture: %v", err)
+	}
 
 	_, err := mergeHook(path, "/usr/bin/gh-review-hook")
 	if err != nil {

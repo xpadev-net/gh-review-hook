@@ -76,17 +76,21 @@ func selectTarget(targets []installTarget) (selected int, cancelled bool, err er
 			clearMenu(len(targets))
 			fmt.Print("\r\n")
 			return cursor, false, nil
-		case 0x1B: // ESC — start of arrow key sequence
-			n, _ = os.Stdin.Read(buf[1:3])
-			if n == 2 && buf[1] == '[' {
-				switch buf[2] {
-				case 'A': // Up arrow
-					if cursor > 0 {
-						cursor--
-					}
-				case 'B': // Down arrow
-					if cursor < len(targets)-1 {
-						cursor++
+		case 0x1B: // ESC — potential start of arrow key sequence
+			// Read one byte at a time to avoid blocking on bare ESC.
+			n, _ = os.Stdin.Read(buf[1:2])
+			if n == 1 && buf[1] == '[' {
+				n, _ = os.Stdin.Read(buf[2:3])
+				if n == 1 {
+					switch buf[2] {
+					case 'A': // Up arrow
+						if cursor > 0 {
+							cursor--
+						}
+					case 'B': // Down arrow
+						if cursor < len(targets)-1 {
+							cursor++
+						}
 					}
 				}
 			}
