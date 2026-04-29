@@ -158,6 +158,59 @@ All changes look good. Safe to merge.
 	}
 }
 
+func TestExtractGreptileReview_Confidence5of5_WithPrompt(t *testing.T) {
+	// 5/5 でも Prompt To Fix All With AI が含まれるケース
+	body := `PR description.
+
+<!-- greptile_comment -->
+
+<h3>Greptile Summary</h3>
+
+Looks good overall with minor nits.
+
+<h3>Confidence Score: 5/5</h3>
+
+Highly confident this is safe to merge, but minor style issues noted.
+
+<details><summary>Prompt To Fix All With AI</summary>
+
+` + "`````" + ` markdown
+This is a comment left during a code review.
+Path: path/to/file.ts
+Line: 10-12
+Comment: Minor style issue
+How can I resolve this? If you propose a fix, please make it concise.
+` + "`````" + `
+
+</details>
+
+<sub>Last reviewed commit: abc123</sub>
+
+<!-- /greptile_comment -->`
+
+	confidenceSection, prompt, found := ExtractGreptileReview(body)
+
+	if !found {
+		t.Fatal("expected found=true, got false")
+	}
+
+	if !strings.Contains(confidenceSection, "5/5") {
+		t.Errorf("confidenceSection should contain 5/5, got: %q", confidenceSection)
+	}
+
+	if prompt == "" {
+		t.Error("expected non-empty prompt even when confidence is 5/5")
+	}
+
+	if !strings.Contains(prompt, "path/to/file.ts") {
+		t.Errorf("prompt should contain file path, got: %q", prompt)
+	}
+
+	if strings.Contains(prompt, "`````") {
+		t.Error("prompt should have fence markers stripped")
+	}
+}
+
 func TestExtractGreptileReview_NoGreptileMarkers(t *testing.T) {
 	body := `Just a normal PR description with no Greptile content.`
 

@@ -35,7 +35,7 @@ type ReviewData struct {
 // ExtractGreptileReview parses a PR body and returns the Confidence Score
 // section (from <h3>Confidence Score: to before the next <h3> tag)
 // and the "Prompt To Fix All With AI" content. If no Greptile markers are
-// found, found is false. If Confidence Score is 5/5, prompt will be empty.
+// found, found is false.
 func ExtractGreptileReview(body string) (confidenceSection string, prompt string, found bool) {
 	// Locate the Greptile block
 	startIdx := strings.Index(body, greptileStart)

@@ -133,14 +133,15 @@ func run() int {
 		feedbackParts = append(feedbackParts, strings.TrimRight(sb.String(), "\n"))
 	}
 
-	// Part 2 & 3: Skip both confidence section and prompt when score is 5/5
+	// Part 2: Skip confidence section when score is 5/5
+	// Part 3: Always include prompt when present (5/5 + prompt = not approved)
 	is5of5 := found && strings.HasPrefix(confidenceSection, "<h3>Confidence Score: 5/5</h3>")
 
 	if found && confidenceSection != "" && !is5of5 {
 		feedbackParts = append(feedbackParts, confidenceSection)
 	}
 
-	if prompt != "" && !is5of5 {
+	if prompt != "" {
 		feedbackParts = append(feedbackParts, prompt)
 	}
 
