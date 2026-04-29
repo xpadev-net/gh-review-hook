@@ -43,11 +43,15 @@ func selectTarget(targets []installTarget) (selected int, cancelled bool, err er
 	sigCh := make(chan os.Signal, 1)
 	signal.Notify(sigCh, os.Interrupt)
 	go func() {
-		<-sigCh
-		term.Restore(fd, oldState)
-		os.Exit(130)
+		if _, ok := <-sigCh; ok {
+			term.Restore(fd, oldState)
+			os.Exit(130)
+		}
 	}()
-	defer signal.Stop(sigCh)
+	defer func() {
+		signal.Stop(sigCh)
+		close(sigCh)
+	}()
 
 	cursor := 0
 	renderMenu(targets, cursor)
@@ -61,12 +65,15 @@ func selectTarget(targets []installTarget) (selected int, cancelled bool, err er
 
 		switch buf[0] {
 		case 0x03: // Ctrl+C
+			clearMenu(len(targets))
 			fmt.Print("\r\n")
 			return 0, true, nil
 		case 'q', 'Q':
+			clearMenu(len(targets))
 			fmt.Print("\r\n")
 			return 0, true, nil
 		case '\r', '\n':
+			clearMenu(len(targets))
 			fmt.Print("\r\n")
 			return cursor, false, nil
 		case 0x1B: // ESC — start of arrow key sequence

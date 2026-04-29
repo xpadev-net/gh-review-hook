@@ -186,6 +186,7 @@ func runInstall() int {
 	} else {
 		fmt.Printf("Installed gh-review-hook hook into %s\n", targets[selected].path)
 		fmt.Printf("Binary: %s\n", binaryPath)
+		fmt.Println("Note: JSON keys in the settings file may have been reordered (Go map encoding is alphabetical).")
 	}
 	return 0
 }
