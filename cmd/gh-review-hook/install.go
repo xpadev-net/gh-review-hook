@@ -57,12 +57,19 @@ func mergeHook(path, binaryPath string) (bool, error) {
 		if err := json.Unmarshal(data, &root); err != nil {
 			return false, fmt.Errorf("cannot parse %s: %w", path, err)
 		}
+		if root == nil {
+			// json.Unmarshal succeeds without error on JSON null, leaving map nil.
+			root = make(map[string]json.RawMessage)
+		}
 	}
 
 	var hooksMap map[string]json.RawMessage
 	if raw, ok := root["hooks"]; ok {
 		if err := json.Unmarshal(raw, &hooksMap); err != nil {
 			return false, fmt.Errorf("cannot parse hooks field in %s: %w", path, err)
+		}
+		if hooksMap == nil {
+			hooksMap = make(map[string]json.RawMessage)
 		}
 	} else {
 		hooksMap = make(map[string]json.RawMessage)

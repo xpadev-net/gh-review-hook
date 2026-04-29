@@ -173,6 +173,44 @@ func TestMergeHook_IdempotentSymlink(t *testing.T) {
 	}
 }
 
+func TestMergeHook_NullRootJSON(t *testing.T) {
+	dir := t.TempDir()
+	path := filepath.Join(dir, "settings.json")
+	if err := os.WriteFile(path, []byte("null"), 0o600); err != nil {
+		t.Fatalf("write fixture: %v", err)
+	}
+	alreadyInstalled, err := mergeHook(path, "/usr/bin/gh-review-hook")
+	if err != nil {
+		t.Fatalf("unexpected error on null JSON: %v", err)
+	}
+	if alreadyInstalled {
+		t.Fatal("expected not already installed")
+	}
+	cmds := getStopCommands(t, readJSON(t, path))
+	if len(cmds) != 1 || cmds[0] != "/usr/bin/gh-review-hook" {
+		t.Fatalf("unexpected commands: %v", cmds)
+	}
+}
+
+func TestMergeHook_NullHooksField(t *testing.T) {
+	dir := t.TempDir()
+	path := filepath.Join(dir, "settings.json")
+	if err := os.WriteFile(path, []byte(`{"hooks":null}`), 0o600); err != nil {
+		t.Fatalf("write fixture: %v", err)
+	}
+	alreadyInstalled, err := mergeHook(path, "/usr/bin/gh-review-hook")
+	if err != nil {
+		t.Fatalf("unexpected error on null hooks: %v", err)
+	}
+	if alreadyInstalled {
+		t.Fatal("expected not already installed")
+	}
+	cmds := getStopCommands(t, readJSON(t, path))
+	if len(cmds) != 1 || cmds[0] != "/usr/bin/gh-review-hook" {
+		t.Fatalf("unexpected commands: %v", cmds)
+	}
+}
+
 func TestMergeHook_MalformedStopEntrySkipped(t *testing.T) {
 	dir := t.TempDir()
 	path := filepath.Join(dir, "settings.json")

@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"os"
 	"os/signal"
+	"syscall"
 
 	"golang.org/x/term"
 )
@@ -77,7 +78,9 @@ func selectTarget(targets []installTarget) (selected int, cancelled bool, err er
 			fmt.Print("\r\n")
 			return cursor, false, nil
 		case 0x1B: // ESC — potential start of arrow key sequence
-			// Read one byte at a time to avoid blocking on bare ESC.
+			// Use non-blocking reads for the follow-up bytes so a bare ESC
+			// keypress does not stall the loop or silently consume the next key.
+			syscall.SetNonblock(fd, true)
 			n, _ = os.Stdin.Read(buf[1:2])
 			if n == 1 && buf[1] == '[' {
 				n, _ = os.Stdin.Read(buf[2:3])
@@ -94,6 +97,7 @@ func selectTarget(targets []installTarget) (selected int, cancelled bool, err er
 					}
 				}
 			}
+			syscall.SetNonblock(fd, false)
 		}
 
 		clearMenu(len(targets))
