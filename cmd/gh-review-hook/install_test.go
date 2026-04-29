@@ -141,6 +141,34 @@ func TestMergeHook_IdempotentExactPath(t *testing.T) {
 	}
 }
 
+func TestMergeHook_IdempotentSymlink(t *testing.T) {
+	dir := t.TempDir()
+	settingsPath := filepath.Join(dir, "settings.json")
+
+	realBin := filepath.Join(dir, "gh-review-hook-real")
+	if err := os.WriteFile(realBin, []byte("binary"), 0o755); err != nil {
+		t.Fatalf("create real binary: %v", err)
+	}
+	symlinkBin := filepath.Join(dir, "gh-review-hook")
+	if err := os.Symlink(realBin, symlinkBin); err != nil {
+		t.Fatalf("create symlink: %v", err)
+	}
+
+	// Install using the symlink path.
+	if _, err := mergeHook(settingsPath, symlinkBin); err != nil {
+		t.Fatalf("first install error: %v", err)
+	}
+
+	// Re-run using the resolved real path — should be detected as already installed.
+	alreadyInstalled, err := mergeHook(settingsPath, realBin)
+	if err != nil {
+		t.Fatalf("second install error: %v", err)
+	}
+	if !alreadyInstalled {
+		t.Fatal("expected alreadyInstalled=true when re-running with resolved symlink target")
+	}
+}
+
 func TestMergeHook_MalformedStopEntrySkipped(t *testing.T) {
 	dir := t.TempDir()
 	path := filepath.Join(dir, "settings.json")
