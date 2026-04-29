@@ -248,7 +248,9 @@ func TestMergeHook_PreservesOtherHookEvents(t *testing.T) {
 
 	root := readJSON(t, path)
 	var hooksMap map[string]json.RawMessage
-	json.Unmarshal(root["hooks"], &hooksMap)
+	if err := json.Unmarshal(root["hooks"], &hooksMap); err != nil {
+		t.Fatalf("cannot parse hooks: %v", err)
+	}
 	if _, ok := hooksMap["PreToolUse"]; !ok {
 		t.Fatal("PreToolUse event was lost")
 	}
