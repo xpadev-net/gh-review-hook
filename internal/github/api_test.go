@@ -245,7 +245,7 @@ func TestFindPR(t *testing.T) {
 	}{
 		{
 			name:       "found PR",
-			response:   `[{"number":42,"body":"test","head":{"sha":"abc","ref":"feat"}}]`,
+			response:   `[{"number":42,"body":"test","head":{"sha":"abc","ref":"feat"},"base":{"ref":"main"}}]`,
 			statusCode: 200,
 			wantNumber: 42,
 		},
@@ -313,7 +313,7 @@ func TestGetPR(t *testing.T) {
 	mux.HandleFunc("/", func(w http.ResponseWriter, r *http.Request) {
 		gotPath = r.URL.Path
 		w.Header().Set("Content-Type", "application/json")
-		fmt.Fprint(w, `{"number":99,"body":"pr body","head":{"sha":"def456","ref":"my-branch"}}`)
+		fmt.Fprint(w, `{"number":99,"body":"pr body","head":{"sha":"def456","ref":"my-branch"},"base":{"ref":"main"}}`)
 	})
 	withTestServer(t, mux)
 
@@ -329,6 +329,9 @@ func TestGetPR(t *testing.T) {
 	}
 	if pr.Head.SHA != "def456" {
 		t.Errorf("PR head SHA = %q, want %q", pr.Head.SHA, "def456")
+	}
+	if pr.Base.Ref != "main" {
+		t.Errorf("PR base ref = %q, want %q", pr.Base.Ref, "main")
 	}
 	if gotPath != "/repos/owner/repo/pulls/99" {
 		t.Errorf("request path = %q, want %q", gotPath, "/repos/owner/repo/pulls/99")
