@@ -26,6 +26,9 @@ type PR struct {
 		SHA string `json:"sha"`
 		Ref string `json:"ref"`
 	} `json:"head"`
+	Base struct {
+		Ref string `json:"ref"`
+	} `json:"base"`
 }
 
 // CommentReactions represents the subset of reactions used by this tool.

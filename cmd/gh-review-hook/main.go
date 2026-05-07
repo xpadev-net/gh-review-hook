@@ -192,6 +192,25 @@ func run() int {
 		feedbackParts = append(feedbackParts, p)
 	}
 
+	// Step 11: Check for merge conflicts with target branch
+	if latestPR.Head.Ref != "" && latestPR.Base.Ref != "" {
+		conflictFiles, err := git.ConflictFiles(latestPR.Head.Ref, latestPR.Base.Ref)
+		if err != nil {
+			fmt.Fprintf(os.Stderr, "warning: merge conflict check failed: %v\n", err)
+		} else if len(conflictFiles) > 0 {
+			var sb strings.Builder
+			sb.WriteString("Merge conflicts detected with target branch '")
+			sb.WriteString(latestPR.Base.Ref)
+			sb.WriteString("':\n")
+			for _, f := range conflictFiles {
+				sb.WriteString("- ")
+				sb.WriteString(f)
+				sb.WriteString("\n")
+			}
+			feedbackParts = append(feedbackParts, strings.TrimRight(sb.String(), "\n"))
+		}
+	}
+
 	if len(feedbackParts) > 0 {
 		fmt.Fprintln(os.Stderr, strings.Join(feedbackParts, "\n---\n"))
 		return 2
