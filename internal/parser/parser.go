@@ -20,7 +20,7 @@ const (
 
 var (
 	lastReviewedCommitRawRe  = regexp.MustCompile(`(?i)Last reviewed commit:\s*([0-9a-f]{7,40})`)
-	lastReviewedCommitLinkRe = regexp.MustCompile(`(?i)Last reviewed commit:\s*\[[^\]]+\]\([^)]+/commit/([0-9a-f]{7,40})\)`)
+	lastReviewedCommitLinkRe = regexp.MustCompile(`(?i)Last reviewed commit:\s*\[(?:[^\]\\]|\\.)+\]\([^)]+/commit/([0-9a-f]{7,40})(?:[?#][^)]*)?\)`)
 )
 
 // ReviewData is parsed review information independent of where the review lives
