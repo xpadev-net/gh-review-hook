@@ -396,6 +396,31 @@ Safe to merge.
 	}
 }
 
+func TestExtractLastReviewedCommit_EscapedBracketsInLinkText(t *testing.T) {
+	// Anchor text contains \[\] (escaped Markdown brackets) which includes a raw ] character.
+	body := `<sub>Reviews (1): Last reviewed commit: ["feat: support array\[\] type..."](https://github.com/o/r/commit/aabbccdd11223344556677889900aabbccdd1122) | [Re-trigger Greptile](https://app.greptile.com/api/retrigger?id=1)</sub>`
+	got := ExtractLastReviewedCommit(body)
+	if got != "aabbccdd11223344556677889900aabbccdd1122" {
+		t.Errorf("last reviewed commit = %q, want full SHA", got)
+	}
+}
+
+func TestExtractLastReviewedCommit_URLWithQueryString(t *testing.T) {
+	body := `<sub>Last reviewed commit: ["msg"](https://github.com/o/r/commit/aabbccdd11223344556677889900aabbccdd1122?w=1)</sub>`
+	got := ExtractLastReviewedCommit(body)
+	if got != "aabbccdd11223344556677889900aabbccdd1122" {
+		t.Errorf("last reviewed commit = %q, want full SHA", got)
+	}
+}
+
+func TestExtractLastReviewedCommit_URLWithFragment(t *testing.T) {
+	body := `<sub>Last reviewed commit: ["msg"](https://github.com/o/r/commit/aabbccdd11223344556677889900aabbccdd1122#diff-abc)</sub>`
+	got := ExtractLastReviewedCommit(body)
+	if got != "aabbccdd11223344556677889900aabbccdd1122" {
+		t.Errorf("last reviewed commit = %q, want full SHA", got)
+	}
+}
+
 func TestExtractGreptileReviewComment_OnlyLastReviewedCommitNotFound(t *testing.T) {
 	body := `<sub>Last reviewed commit: abcdef1234567890</sub>`
 	got := ExtractGreptileReviewComment(body)
