@@ -94,7 +94,7 @@ func parseRemoteURL(url string) (string, string, error) {
 // Requires Git 2.40+. Errors are treated as soft failures by the caller.
 func ConflictFiles(headRef, baseBranch string) ([]string, error) {
 	if _, err := runGit("fetch", "origin", headRef, baseBranch); err != nil {
-		return nil, fmt.Errorf("failed to fetch origin/%s and origin/%s: %w", headRef, baseBranch, err)
+		return nil, fmt.Errorf("failed to fetch %s and %s from origin: %w", headRef, baseBranch, err)
 	}
 
 	stdout, exitCode, err := runGitWithExitCode(
