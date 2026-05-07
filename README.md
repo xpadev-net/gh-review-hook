@@ -14,10 +14,10 @@ Claude Code のセッション終了時に自動実行され、以下をチェ�
 ## インストール
 
 ```bash
-go install github.com/xpadev/gh-review-hook/cmd/gh-review-hook@latest
+go install github.com/xpadev-net/gh-review-hook/cmd/gh-review-hook@latest
 ```
 
-Go 1.22 以上が必要です。
+Go 1.26 以上が必要です。インストール後、`~/go/bin` が PATH に含まれていることを確認してください。
 
 ## セットアップ
 
