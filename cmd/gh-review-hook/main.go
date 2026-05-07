@@ -9,10 +9,10 @@ import (
 	"strings"
 	"time"
 
-	"github.com/xpadev/gh-review-hook/internal/git"
-	"github.com/xpadev/gh-review-hook/internal/github"
-	"github.com/xpadev/gh-review-hook/internal/greptile"
-	"github.com/xpadev/gh-review-hook/internal/parser"
+	"github.com/xpadev-net/gh-review-hook/internal/git"
+	"github.com/xpadev-net/gh-review-hook/internal/github"
+	"github.com/xpadev-net/gh-review-hook/internal/greptile"
+	"github.com/xpadev-net/gh-review-hook/internal/parser"
 )
 
 // greptileUpdateDelay is the time to wait for Greptile to update the PR description

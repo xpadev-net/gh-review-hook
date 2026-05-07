@@ -7,8 +7,8 @@ import (
 	"testing"
 	"time"
 
-	"github.com/xpadev/gh-review-hook/internal/github"
-	"github.com/xpadev/gh-review-hook/internal/parser"
+	"github.com/xpadev-net/gh-review-hook/internal/github"
+	"github.com/xpadev-net/gh-review-hook/internal/parser"
 )
 
 func TestInspectComments_PrefersLatestGreptileReview(t *testing.T) {

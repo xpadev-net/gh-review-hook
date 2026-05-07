@@ -1,4 +1,4 @@
-module github.com/xpadev/gh-review-hook
+module github.com/xpadev-net/gh-review-hook
 
 go 1.26.1
 
