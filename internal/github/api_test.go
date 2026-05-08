@@ -616,6 +616,67 @@ func TestApiGet_NoRetryOnClientError(t *testing.T) {
 	}
 }
 
+func TestParseRetryAfter(t *testing.T) {
+	tests := []struct {
+		name    string
+		headers map[string]string
+		wantMin time.Duration // result must be >= this
+		wantMax time.Duration // result must be <= this (use 0 to mean "expect 0")
+	}{
+		{
+			name:    "no headers",
+			wantMax: 0,
+		},
+		{
+			name:    "Retry-After integer seconds",
+			headers: map[string]string{"Retry-After": "10"},
+			wantMin: 9 * time.Second,
+			wantMax: maxRetryAfterWait,
+		},
+		{
+			name:    "Retry-After integer seconds capped",
+			headers: map[string]string{"Retry-After": "36000"}, // 10 hours
+			wantMin: maxRetryAfterWait,
+			wantMax: maxRetryAfterWait,
+		},
+		{
+			name:    "Retry-After HTTP-date",
+			headers: map[string]string{"Retry-After": time.Now().Add(30 * time.Second).UTC().Format(http.TimeFormat)},
+			wantMin: 1 * time.Second,
+			wantMax: maxRetryAfterWait,
+		},
+		{
+			name:    "X-RateLimit-Reset unix timestamp",
+			headers: map[string]string{"X-RateLimit-Reset": fmt.Sprintf("%d", time.Now().Add(20*time.Second).Unix())},
+			wantMin: 1 * time.Second,
+			wantMax: maxRetryAfterWait,
+		},
+		{
+			name:    "X-RateLimit-Reset in the past returns 0",
+			headers: map[string]string{"X-RateLimit-Reset": fmt.Sprintf("%d", time.Now().Add(-10*time.Second).Unix())},
+			wantMax: 0,
+		},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			h := http.Header{}
+			for k, v := range tt.headers {
+				h.Set(k, v)
+			}
+			got := parseRetryAfter(h)
+			if tt.wantMax == 0 {
+				if got != 0 {
+					t.Errorf("parseRetryAfter = %v, want 0", got)
+				}
+				return
+			}
+			if got < tt.wantMin || got > tt.wantMax {
+				t.Errorf("parseRetryAfter = %v, want [%v, %v]", got, tt.wantMin, tt.wantMax)
+			}
+		})
+	}
+}
+
 func TestGetCheckRuns_TerminatesOnEmptyPage(t *testing.T) {
 	callCount := 0
 	mux := http.NewServeMux()

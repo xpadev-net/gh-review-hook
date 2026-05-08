@@ -21,7 +21,8 @@ const (
 	pollTimeout      = 30 * time.Minute
 	checksAppearWait = 60 * time.Second // max time to wait for at least one check to appear
 
-	httpMaxRetries = 3
+	httpMaxRetries    = 3
+	maxRetryAfterWait = 5 * time.Minute // cap on server-supplied Retry-After to prevent hour-long hangs
 )
 
 // retryableHTTPError is returned when an HTTP response has a retryable status code.
@@ -57,18 +58,25 @@ func isPostRetryableErr(err error) bool {
 	return false
 }
 
-// parseRetryAfter reads the Retry-After (seconds) or X-RateLimit-Reset (unix timestamp)
-// header and returns the suggested wait duration. Returns 0 if neither is present.
+// parseRetryAfter reads the Retry-After (delta-seconds or HTTP-date per RFC 7231 §7.1.3)
+// or X-RateLimit-Reset (unix timestamp) header and returns the suggested wait duration,
+// capped at maxRetryAfterWait. Returns 0 if neither header is present or parseable.
 func parseRetryAfter(h http.Header) time.Duration {
 	if v := h.Get("Retry-After"); v != "" {
 		if secs, err := strconv.Atoi(v); err == nil && secs > 0 {
-			return time.Duration(secs) * time.Second
+			return min(time.Duration(secs)*time.Second, maxRetryAfterWait)
+		}
+		// Also handle HTTP-date format per RFC 7231 §7.1.3.
+		if t, err := http.ParseTime(v); err == nil {
+			if d := time.Until(t); d > 0 {
+				return min(d, maxRetryAfterWait)
+			}
 		}
 	}
 	if v := h.Get("X-RateLimit-Reset"); v != "" {
 		if unix, err := strconv.ParseInt(v, 10, 64); err == nil {
 			if d := time.Until(time.Unix(unix, 0)); d > 0 {
-				return d
+				return min(d, maxRetryAfterWait)
 			}
 		}
 	}
@@ -483,7 +491,8 @@ func doAPIGet(rawURL, token string, dest interface{}) error {
 
 // apiPost performs a POST request to the GitHub API with the given token and
 // decodes the JSON response into dest. Retries up to httpMaxRetries times on
-// transient failures (timeouts, 429, 5xx).
+// 429 rate-limit responses only; 5xx and network errors are not retried to
+// avoid duplicate side effects on non-idempotent requests.
 func apiPost(rawURL, token string, body io.Reader, dest interface{}) error {
 	// POST bodies may only be read once; read into memory so retries can replay.
 	var bodyBytes []byte
