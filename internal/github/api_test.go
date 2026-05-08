@@ -258,7 +258,7 @@ func TestFindPR(t *testing.T) {
 		{
 			name:       "API error",
 			response:   `{"message":"error"}`,
-			statusCode: 500,
+			statusCode: 404,
 			wantErr:    true,
 		},
 	}
@@ -530,6 +530,153 @@ func TestGetCheckRuns_Pagination(t *testing.T) {
 	}
 }
 
+func TestApiGet_RetriesOnTransientError(t *testing.T) {
+	// Override retry wait to zero so the test runs instantly.
+	origWait := httpRetryBaseWait
+	httpRetryBaseWait = 0
+	t.Cleanup(func() { httpRetryBaseWait = origWait })
+
+	callCount := 0
+	mux := http.NewServeMux()
+	mux.HandleFunc("/", func(w http.ResponseWriter, r *http.Request) {
+		callCount++
+		if callCount < 3 {
+			// First two attempts fail with a retryable status.
+			http.Error(w, "service unavailable", http.StatusServiceUnavailable)
+			return
+		}
+		w.Header().Set("Content-Type", "application/json")
+		fmt.Fprint(w, `{"name":"ok","value":1}`)
+	})
+	ts := httptest.NewServer(mux)
+	defer ts.Close()
+
+	type payload struct {
+		Name  string `json:"name"`
+		Value int    `json:"value"`
+	}
+	var dest payload
+	err := apiGet(ts.URL+"/", "token", &dest)
+	if err != nil {
+		t.Fatalf("unexpected error after retries: %v", err)
+	}
+	if callCount != 3 {
+		t.Errorf("expected 3 calls (2 failures + 1 success), got %d", callCount)
+	}
+	if dest.Name != "ok" {
+		t.Errorf("decoded name = %q, want %q", dest.Name, "ok")
+	}
+}
+
+func TestApiGet_ExhaustsRetries(t *testing.T) {
+	origWait := httpRetryBaseWait
+	httpRetryBaseWait = 0
+	t.Cleanup(func() { httpRetryBaseWait = origWait })
+
+	callCount := 0
+	mux := http.NewServeMux()
+	mux.HandleFunc("/", func(w http.ResponseWriter, r *http.Request) {
+		callCount++
+		http.Error(w, "internal server error", http.StatusInternalServerError)
+	})
+	ts := httptest.NewServer(mux)
+	defer ts.Close()
+
+	var dest struct{}
+	err := apiGet(ts.URL+"/", "token", &dest)
+	if err == nil {
+		t.Fatal("expected error after exhausting retries")
+	}
+	if callCount != httpMaxRetries+1 {
+		t.Errorf("expected %d total calls, got %d", httpMaxRetries+1, callCount)
+	}
+}
+
+func TestApiGet_NoRetryOnClientError(t *testing.T) {
+	origWait := httpRetryBaseWait
+	httpRetryBaseWait = 0
+	t.Cleanup(func() { httpRetryBaseWait = origWait })
+
+	callCount := 0
+	mux := http.NewServeMux()
+	mux.HandleFunc("/", func(w http.ResponseWriter, r *http.Request) {
+		callCount++
+		http.Error(w, "not found", http.StatusNotFound)
+	})
+	ts := httptest.NewServer(mux)
+	defer ts.Close()
+
+	var dest struct{}
+	err := apiGet(ts.URL+"/", "token", &dest)
+	if err == nil {
+		t.Fatal("expected error for 404")
+	}
+	if callCount != 1 {
+		t.Errorf("non-retryable error should not retry; got %d calls", callCount)
+	}
+}
+
+func TestParseRetryAfter(t *testing.T) {
+	tests := []struct {
+		name    string
+		headers map[string]string
+		wantMin time.Duration // result must be >= this
+		wantMax time.Duration // result must be <= this (use 0 to mean "expect 0")
+	}{
+		{
+			name:    "no headers",
+			wantMax: 0,
+		},
+		{
+			name:    "Retry-After integer seconds",
+			headers: map[string]string{"Retry-After": "10"},
+			wantMin: 9 * time.Second,
+			wantMax: maxRetryAfterWait,
+		},
+		{
+			name:    "Retry-After integer seconds capped",
+			headers: map[string]string{"Retry-After": "36000"}, // 10 hours
+			wantMin: maxRetryAfterWait,
+			wantMax: maxRetryAfterWait,
+		},
+		{
+			name:    "Retry-After HTTP-date",
+			headers: map[string]string{"Retry-After": time.Now().Add(30 * time.Second).UTC().Format(http.TimeFormat)},
+			wantMin: 1 * time.Second,
+			wantMax: maxRetryAfterWait,
+		},
+		{
+			name:    "X-RateLimit-Reset unix timestamp",
+			headers: map[string]string{"X-RateLimit-Reset": fmt.Sprintf("%d", time.Now().Add(20*time.Second).Unix())},
+			wantMin: 1 * time.Second,
+			wantMax: maxRetryAfterWait,
+		},
+		{
+			name:    "X-RateLimit-Reset in the past returns 0",
+			headers: map[string]string{"X-RateLimit-Reset": fmt.Sprintf("%d", time.Now().Add(-10*time.Second).Unix())},
+			wantMax: 0,
+		},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			h := http.Header{}
+			for k, v := range tt.headers {
+				h.Set(k, v)
+			}
+			got := parseRetryAfter(h)
+			if tt.wantMax == 0 {
+				if got != 0 {
+					t.Errorf("parseRetryAfter = %v, want 0", got)
+				}
+				return
+			}
+			if got < tt.wantMin || got > tt.wantMax {
+				t.Errorf("parseRetryAfter = %v, want [%v, %v]", got, tt.wantMin, tt.wantMax)
+			}
+		})
+	}
+}
+
 func TestGetCheckRuns_TerminatesOnEmptyPage(t *testing.T) {
 	callCount := 0
 	mux := http.NewServeMux()
@@ -582,6 +729,119 @@ func TestGetStatuses_TerminatesOnEmpty(t *testing.T) {
 	}
 	if len(statuses) != 2 {
 		t.Fatalf("got %d statuses, want 2", len(statuses))
+	}
+}
+
+func TestFindPR_5xxExhaustsRetries(t *testing.T) {
+	origWait := httpRetryBaseWait
+	httpRetryBaseWait = 0
+	t.Cleanup(func() { httpRetryBaseWait = origWait })
+
+	callCount := 0
+	mux := http.NewServeMux()
+	mux.HandleFunc("/", func(w http.ResponseWriter, r *http.Request) {
+		callCount++
+		http.Error(w, "internal server error", http.StatusInternalServerError)
+	})
+	withTestServer(t, mux)
+
+	_, err := FindPR("owner", "repo", "branch", "token")
+	if err == nil {
+		t.Fatal("expected error after exhausting retries")
+	}
+	if callCount != httpMaxRetries+1 {
+		t.Errorf("expected %d total calls, got %d", httpMaxRetries+1, callCount)
+	}
+}
+
+func TestApiPost_RetriesOn429(t *testing.T) {
+	origWait := httpRetryBaseWait
+	httpRetryBaseWait = 0
+	t.Cleanup(func() { httpRetryBaseWait = origWait })
+
+	callCount := 0
+	var receivedBodies []string
+	mux := http.NewServeMux()
+	mux.HandleFunc("/", func(w http.ResponseWriter, r *http.Request) {
+		callCount++
+		body, _ := io.ReadAll(r.Body)
+		receivedBodies = append(receivedBodies, string(body))
+		if callCount < 3 {
+			w.WriteHeader(http.StatusTooManyRequests)
+			return
+		}
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(http.StatusCreated)
+		fmt.Fprint(w, `{"id":1,"body":"created"}`)
+	})
+	ts := httptest.NewServer(mux)
+	defer ts.Close()
+
+	type resp struct {
+		ID   int    `json:"id"`
+		Body string `json:"body"`
+	}
+	var dest resp
+	err := apiPost(ts.URL+"/", "token", strings.NewReader(`{"body":"test"}`), &dest)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if callCount != 3 {
+		t.Errorf("expected 3 calls (2 x 429 + 1 success), got %d", callCount)
+	}
+	const wantBody = `{"body":"test"}`
+	for i, b := range receivedBodies {
+		if b != wantBody {
+			t.Errorf("call %d body = %q, want %q", i+1, b, wantBody)
+		}
+	}
+}
+
+func TestApiPost_ExhaustsRetries(t *testing.T) {
+	origWait := httpRetryBaseWait
+	httpRetryBaseWait = 0
+	t.Cleanup(func() { httpRetryBaseWait = origWait })
+
+	callCount := 0
+	mux := http.NewServeMux()
+	mux.HandleFunc("/", func(w http.ResponseWriter, r *http.Request) {
+		callCount++
+		w.WriteHeader(http.StatusTooManyRequests)
+	})
+	ts := httptest.NewServer(mux)
+	defer ts.Close()
+
+	var dest struct{}
+	err := apiPost(ts.URL+"/", "token", strings.NewReader(`{}`), &dest)
+	if err == nil {
+		t.Fatal("expected error after exhausting retries")
+	}
+	if callCount != httpMaxRetries+1 {
+		t.Errorf("expected %d total calls, got %d", httpMaxRetries+1, callCount)
+	}
+}
+
+func TestApiPost_NoRetryOn5xx(t *testing.T) {
+	origWait := httpRetryBaseWait
+	httpRetryBaseWait = 0
+	t.Cleanup(func() { httpRetryBaseWait = origWait })
+
+	callCount := 0
+	mux := http.NewServeMux()
+	mux.HandleFunc("/", func(w http.ResponseWriter, r *http.Request) {
+		callCount++
+		http.Error(w, "internal server error", http.StatusInternalServerError)
+	})
+	ts := httptest.NewServer(mux)
+	defer ts.Close()
+
+	var dest struct{}
+	err := apiPost(ts.URL+"/", "token", strings.NewReader(`{}`), &dest)
+	if err == nil {
+		t.Fatal("expected error for 500")
+	}
+	if callCount != 1 {
+		t.Errorf("POST 5xx should not retry; got %d calls, want 1", callCount)
 	}
 }
 

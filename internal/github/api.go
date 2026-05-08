@@ -3,20 +3,85 @@ package github
 import (
 	"bytes"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"net/http"
+	"net/url"
+	"strconv"
 	"time"
 )
 
 var apiBase = "https://api.github.com"
 var apiHTTPClient = &http.Client{Timeout: 30 * time.Second}
+var httpRetryBaseWait = 2 * time.Second
 
 const (
 	pollInterval     = 15 * time.Second
 	pollTimeout      = 30 * time.Minute
 	checksAppearWait = 60 * time.Second // max time to wait for at least one check to appear
+
+	httpMaxRetries    = 3
+	maxRetryAfterWait = 5 * time.Minute // cap on server-supplied Retry-After to prevent hour-long hangs
 )
+
+// retryableHTTPError is returned when an HTTP response has a retryable status code.
+type retryableHTTPError struct {
+	statusCode int
+	retryAfter time.Duration // suggested wait from Retry-After / X-RateLimit-Reset; 0 if absent
+	msg        string
+}
+
+func (e *retryableHTTPError) Error() string { return e.msg }
+
+// isRetryableErr returns true if err represents a transient failure worth retrying for GET requests.
+func isRetryableErr(err error) bool {
+	var rhe *retryableHTTPError
+	if errors.As(err, &rhe) {
+		return true
+	}
+	var ue *url.Error
+	if errors.As(err, &ue) {
+		return ue.Timeout()
+	}
+	return false
+}
+
+// isPostRetryableErr returns true only for 429 rate-limit errors, which are safe to
+// retry for POST requests. 5xx and network errors are excluded because the server
+// may have already processed the request.
+func isPostRetryableErr(err error) bool {
+	var rhe *retryableHTTPError
+	if errors.As(err, &rhe) {
+		return rhe.statusCode == http.StatusTooManyRequests
+	}
+	return false
+}
+
+// parseRetryAfter reads the Retry-After (delta-seconds or HTTP-date per RFC 7231 §7.1.3)
+// or X-RateLimit-Reset (unix timestamp) header and returns the suggested wait duration,
+// capped at maxRetryAfterWait. Returns 0 if neither header is present or parseable.
+func parseRetryAfter(h http.Header) time.Duration {
+	if v := h.Get("Retry-After"); v != "" {
+		if secs, err := strconv.Atoi(v); err == nil && secs > 0 {
+			return min(time.Duration(secs)*time.Second, maxRetryAfterWait)
+		}
+		// Also handle HTTP-date format per RFC 7231 §7.1.3.
+		if t, err := http.ParseTime(v); err == nil {
+			if d := time.Until(t); d > 0 {
+				return min(d, maxRetryAfterWait)
+			}
+		}
+	}
+	if v := h.Get("X-RateLimit-Reset"); v != "" {
+		if unix, err := strconv.ParseInt(v, 10, 64); err == nil {
+			if d := time.Until(time.Unix(unix, 0)); d > 0 {
+				return min(d, maxRetryAfterWait)
+			}
+		}
+	}
+	return 0
+}
 
 // PR represents a GitHub Pull Request (partial fields).
 type PR struct {
@@ -371,41 +436,100 @@ func deduplicateStatuses(statuses []CommitStatus) []CommitStatus {
 }
 
 // apiGet performs a GET request to the GitHub API with the given token and
-// decodes the JSON response into dest.
+// decodes the JSON response into dest. Retries up to httpMaxRetries times on
+// transient failures (timeouts, 429, 5xx).
 func apiGet(url, token string, dest interface{}) error {
-	req, err := http.NewRequest("GET", url, nil)
+	var lastErr error
+	for attempt := 0; attempt <= httpMaxRetries; attempt++ {
+		if attempt > 0 {
+			wait := httpRetryBaseWait * time.Duration(1<<(attempt-1))
+			var rhe *retryableHTTPError
+			if errors.As(lastErr, &rhe) && rhe.retryAfter > wait {
+				wait = rhe.retryAfter
+			}
+			time.Sleep(wait)
+		}
+		lastErr = doAPIGet(url, token, dest)
+		if lastErr == nil || !isRetryableErr(lastErr) {
+			return lastErr
+		}
+	}
+	return lastErr
+}
+
+func doAPIGet(rawURL, token string, dest interface{}) error {
+	req, err := http.NewRequest("GET", rawURL, nil)
 	if err != nil {
-		return fmt.Errorf("failed to create request for %s: %w", url, err)
+		return fmt.Errorf("failed to create request for %s: %w", rawURL, err)
 	}
 	req.Header.Set("Authorization", "Bearer "+token)
 	req.Header.Set("Accept", "application/vnd.github+json")
 
 	resp, err := apiHTTPClient.Do(req)
 	if err != nil {
-		return fmt.Errorf("HTTP request failed for %s: %w", url, err)
+		return fmt.Errorf("HTTP request failed for %s: %w", rawURL, err)
 	}
 	defer resp.Body.Close()
 
 	if resp.StatusCode != http.StatusOK {
 		body, readErr := io.ReadAll(resp.Body)
-		if readErr != nil {
-			return fmt.Errorf("GitHub API returned HTTP %d for %s (failed to read body: %v)", resp.StatusCode, url, readErr)
+		msg := fmt.Sprintf("GitHub API returned HTTP %d for %s", resp.StatusCode, rawURL)
+		if readErr == nil {
+			msg += ": " + string(body)
 		}
-		return fmt.Errorf("GitHub API returned HTTP %d for %s: %s", resp.StatusCode, url, string(body))
+		if isRetryableStatusCode(resp.StatusCode) {
+			return &retryableHTTPError{statusCode: resp.StatusCode, retryAfter: parseRetryAfter(resp.Header), msg: msg}
+		}
+		return errors.New(msg)
 	}
 
 	if err := json.NewDecoder(resp.Body).Decode(dest); err != nil {
-		return fmt.Errorf("failed to decode JSON from %s: %w", url, err)
+		return fmt.Errorf("failed to decode JSON from %s: %w", rawURL, err)
 	}
 	return nil
 }
 
 // apiPost performs a POST request to the GitHub API with the given token and
-// decodes the JSON response into dest.
-func apiPost(url, token string, body io.Reader, dest interface{}) error {
-	req, err := http.NewRequest("POST", url, body)
+// decodes the JSON response into dest. Retries up to httpMaxRetries times on
+// 429 rate-limit responses only; 5xx and network errors are not retried to
+// avoid duplicate side effects on non-idempotent requests.
+func apiPost(rawURL, token string, body io.Reader, dest interface{}) error {
+	// POST bodies may only be read once; read into memory so retries can replay.
+	var bodyBytes []byte
+	if body != nil {
+		var err error
+		bodyBytes, err = io.ReadAll(body)
+		if err != nil {
+			return fmt.Errorf("failed to read request body for %s: %w", rawURL, err)
+		}
+	}
+
+	var lastErr error
+	for attempt := 0; attempt <= httpMaxRetries; attempt++ {
+		if attempt > 0 {
+			wait := httpRetryBaseWait * time.Duration(1<<(attempt-1))
+			var rhe *retryableHTTPError
+			if errors.As(lastErr, &rhe) && rhe.retryAfter > wait {
+				wait = rhe.retryAfter
+			}
+			time.Sleep(wait)
+		}
+		var r io.Reader
+		if bodyBytes != nil {
+			r = bytes.NewReader(bodyBytes)
+		}
+		lastErr = doAPIPost(rawURL, token, r, dest)
+		if lastErr == nil || !isPostRetryableErr(lastErr) {
+			return lastErr
+		}
+	}
+	return lastErr
+}
+
+func doAPIPost(rawURL, token string, body io.Reader, dest interface{}) error {
+	req, err := http.NewRequest("POST", rawURL, body)
 	if err != nil {
-		return fmt.Errorf("failed to create request for %s: %w", url, err)
+		return fmt.Errorf("failed to create request for %s: %w", rawURL, err)
 	}
 	req.Header.Set("Authorization", "Bearer "+token)
 	req.Header.Set("Accept", "application/vnd.github+json")
@@ -413,20 +537,38 @@ func apiPost(url, token string, body io.Reader, dest interface{}) error {
 
 	resp, err := apiHTTPClient.Do(req)
 	if err != nil {
-		return fmt.Errorf("HTTP request failed for %s: %w", url, err)
+		return fmt.Errorf("HTTP request failed for %s: %w", rawURL, err)
 	}
 	defer resp.Body.Close()
 
 	if resp.StatusCode != http.StatusCreated && resp.StatusCode != http.StatusOK {
 		respBody, readErr := io.ReadAll(resp.Body)
-		if readErr != nil {
-			return fmt.Errorf("GitHub API returned HTTP %d for %s (failed to read body: %v)", resp.StatusCode, url, readErr)
+		msg := fmt.Sprintf("GitHub API returned HTTP %d for %s", resp.StatusCode, rawURL)
+		if readErr == nil {
+			msg += ": " + string(respBody)
 		}
-		return fmt.Errorf("GitHub API returned HTTP %d for %s: %s", resp.StatusCode, url, string(respBody))
+		if isRetryableStatusCode(resp.StatusCode) {
+			return &retryableHTTPError{statusCode: resp.StatusCode, retryAfter: parseRetryAfter(resp.Header), msg: msg}
+		}
+		return errors.New(msg)
 	}
 
 	if err := json.NewDecoder(resp.Body).Decode(dest); err != nil {
-		return fmt.Errorf("failed to decode JSON from %s: %w", url, err)
+		return fmt.Errorf("failed to decode JSON from %s: %w", rawURL, err)
 	}
 	return nil
+}
+
+// isRetryableStatusCode returns true for HTTP status codes that indicate a
+// transient server-side failure.
+func isRetryableStatusCode(code int) bool {
+	switch code {
+	case http.StatusTooManyRequests,
+		http.StatusInternalServerError,
+		http.StatusBadGateway,
+		http.StatusServiceUnavailable,
+		http.StatusGatewayTimeout:
+		return true
+	}
+	return false
 }
