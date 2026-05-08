@@ -671,6 +671,119 @@ func TestGetStatuses_TerminatesOnEmpty(t *testing.T) {
 	}
 }
 
+func TestFindPR_5xxExhaustsRetries(t *testing.T) {
+	origWait := httpRetryBaseWait
+	httpRetryBaseWait = 0
+	t.Cleanup(func() { httpRetryBaseWait = origWait })
+
+	callCount := 0
+	mux := http.NewServeMux()
+	mux.HandleFunc("/", func(w http.ResponseWriter, r *http.Request) {
+		callCount++
+		http.Error(w, "internal server error", http.StatusInternalServerError)
+	})
+	withTestServer(t, mux)
+
+	_, err := FindPR("owner", "repo", "branch", "token")
+	if err == nil {
+		t.Fatal("expected error after exhausting retries")
+	}
+	if callCount != httpMaxRetries+1 {
+		t.Errorf("expected %d total calls, got %d", httpMaxRetries+1, callCount)
+	}
+}
+
+func TestApiPost_RetriesOn429(t *testing.T) {
+	origWait := httpRetryBaseWait
+	httpRetryBaseWait = 0
+	t.Cleanup(func() { httpRetryBaseWait = origWait })
+
+	callCount := 0
+	var receivedBodies []string
+	mux := http.NewServeMux()
+	mux.HandleFunc("/", func(w http.ResponseWriter, r *http.Request) {
+		callCount++
+		body, _ := io.ReadAll(r.Body)
+		receivedBodies = append(receivedBodies, string(body))
+		if callCount < 3 {
+			w.WriteHeader(http.StatusTooManyRequests)
+			return
+		}
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(http.StatusCreated)
+		fmt.Fprint(w, `{"id":1,"body":"created"}`)
+	})
+	ts := httptest.NewServer(mux)
+	defer ts.Close()
+
+	type resp struct {
+		ID   int    `json:"id"`
+		Body string `json:"body"`
+	}
+	var dest resp
+	err := apiPost(ts.URL+"/", "token", strings.NewReader(`{"body":"test"}`), &dest)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if callCount != 3 {
+		t.Errorf("expected 3 calls (2 x 429 + 1 success), got %d", callCount)
+	}
+	const wantBody = `{"body":"test"}`
+	for i, b := range receivedBodies {
+		if b != wantBody {
+			t.Errorf("call %d body = %q, want %q", i+1, b, wantBody)
+		}
+	}
+}
+
+func TestApiPost_ExhaustsRetries(t *testing.T) {
+	origWait := httpRetryBaseWait
+	httpRetryBaseWait = 0
+	t.Cleanup(func() { httpRetryBaseWait = origWait })
+
+	callCount := 0
+	mux := http.NewServeMux()
+	mux.HandleFunc("/", func(w http.ResponseWriter, r *http.Request) {
+		callCount++
+		w.WriteHeader(http.StatusTooManyRequests)
+	})
+	ts := httptest.NewServer(mux)
+	defer ts.Close()
+
+	var dest struct{}
+	err := apiPost(ts.URL+"/", "token", strings.NewReader(`{}`), &dest)
+	if err == nil {
+		t.Fatal("expected error after exhausting retries")
+	}
+	if callCount != httpMaxRetries+1 {
+		t.Errorf("expected %d total calls, got %d", httpMaxRetries+1, callCount)
+	}
+}
+
+func TestApiPost_NoRetryOn5xx(t *testing.T) {
+	origWait := httpRetryBaseWait
+	httpRetryBaseWait = 0
+	t.Cleanup(func() { httpRetryBaseWait = origWait })
+
+	callCount := 0
+	mux := http.NewServeMux()
+	mux.HandleFunc("/", func(w http.ResponseWriter, r *http.Request) {
+		callCount++
+		http.Error(w, "internal server error", http.StatusInternalServerError)
+	})
+	ts := httptest.NewServer(mux)
+	defer ts.Close()
+
+	var dest struct{}
+	err := apiPost(ts.URL+"/", "token", strings.NewReader(`{}`), &dest)
+	if err == nil {
+		t.Fatal("expected error for 500")
+	}
+	if callCount != 1 {
+		t.Errorf("POST 5xx should not retry; got %d calls, want 1", callCount)
+	}
+}
+
 func TestGetStatuses_Pagination(t *testing.T) {
 	var pages []string
 	mux := http.NewServeMux()

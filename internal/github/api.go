@@ -8,6 +8,7 @@ import (
 	"io"
 	"net/http"
 	"net/url"
+	"strconv"
 	"time"
 )
 
@@ -26,12 +27,13 @@ const (
 // retryableHTTPError is returned when an HTTP response has a retryable status code.
 type retryableHTTPError struct {
 	statusCode int
+	retryAfter time.Duration // suggested wait from Retry-After / X-RateLimit-Reset; 0 if absent
 	msg        string
 }
 
 func (e *retryableHTTPError) Error() string { return e.msg }
 
-// isRetryableErr returns true if err represents a transient failure worth retrying.
+// isRetryableErr returns true if err represents a transient failure worth retrying for GET requests.
 func isRetryableErr(err error) bool {
 	var rhe *retryableHTTPError
 	if errors.As(err, &rhe) {
@@ -42,6 +44,35 @@ func isRetryableErr(err error) bool {
 		return ue.Timeout()
 	}
 	return false
+}
+
+// isPostRetryableErr returns true only for 429 rate-limit errors, which are safe to
+// retry for POST requests. 5xx and network errors are excluded because the server
+// may have already processed the request.
+func isPostRetryableErr(err error) bool {
+	var rhe *retryableHTTPError
+	if errors.As(err, &rhe) {
+		return rhe.statusCode == http.StatusTooManyRequests
+	}
+	return false
+}
+
+// parseRetryAfter reads the Retry-After (seconds) or X-RateLimit-Reset (unix timestamp)
+// header and returns the suggested wait duration. Returns 0 if neither is present.
+func parseRetryAfter(h http.Header) time.Duration {
+	if v := h.Get("Retry-After"); v != "" {
+		if secs, err := strconv.Atoi(v); err == nil && secs > 0 {
+			return time.Duration(secs) * time.Second
+		}
+	}
+	if v := h.Get("X-RateLimit-Reset"); v != "" {
+		if unix, err := strconv.ParseInt(v, 10, 64); err == nil {
+			if d := time.Until(time.Unix(unix, 0)); d > 0 {
+				return d
+			}
+		}
+	}
+	return 0
 }
 
 // PR represents a GitHub Pull Request (partial fields).
@@ -403,7 +434,12 @@ func apiGet(url, token string, dest interface{}) error {
 	var lastErr error
 	for attempt := 0; attempt <= httpMaxRetries; attempt++ {
 		if attempt > 0 {
-			time.Sleep(httpRetryBaseWait * time.Duration(1<<(attempt-1)))
+			wait := httpRetryBaseWait * time.Duration(1<<(attempt-1))
+			var rhe *retryableHTTPError
+			if errors.As(lastErr, &rhe) && rhe.retryAfter > wait {
+				wait = rhe.retryAfter
+			}
+			time.Sleep(wait)
 		}
 		lastErr = doAPIGet(url, token, dest)
 		if lastErr == nil || !isRetryableErr(lastErr) {
@@ -434,7 +470,7 @@ func doAPIGet(rawURL, token string, dest interface{}) error {
 			msg += ": " + string(body)
 		}
 		if isRetryableStatusCode(resp.StatusCode) {
-			return &retryableHTTPError{statusCode: resp.StatusCode, msg: msg}
+			return &retryableHTTPError{statusCode: resp.StatusCode, retryAfter: parseRetryAfter(resp.Header), msg: msg}
 		}
 		return errors.New(msg)
 	}
@@ -462,14 +498,19 @@ func apiPost(rawURL, token string, body io.Reader, dest interface{}) error {
 	var lastErr error
 	for attempt := 0; attempt <= httpMaxRetries; attempt++ {
 		if attempt > 0 {
-			time.Sleep(httpRetryBaseWait * time.Duration(1<<(attempt-1)))
+			wait := httpRetryBaseWait * time.Duration(1<<(attempt-1))
+			var rhe *retryableHTTPError
+			if errors.As(lastErr, &rhe) && rhe.retryAfter > wait {
+				wait = rhe.retryAfter
+			}
+			time.Sleep(wait)
 		}
 		var r io.Reader
 		if bodyBytes != nil {
 			r = bytes.NewReader(bodyBytes)
 		}
 		lastErr = doAPIPost(rawURL, token, r, dest)
-		if lastErr == nil || !isRetryableErr(lastErr) {
+		if lastErr == nil || !isPostRetryableErr(lastErr) {
 			return lastErr
 		}
 	}
@@ -498,7 +539,7 @@ func doAPIPost(rawURL, token string, body io.Reader, dest interface{}) error {
 			msg += ": " + string(respBody)
 		}
 		if isRetryableStatusCode(resp.StatusCode) {
-			return &retryableHTTPError{statusCode: resp.StatusCode, msg: msg}
+			return &retryableHTTPError{statusCode: resp.StatusCode, retryAfter: parseRetryAfter(resp.Header), msg: msg}
 		}
 		return errors.New(msg)
 	}
