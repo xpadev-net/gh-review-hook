@@ -80,7 +80,9 @@ func run() int {
 	// commit statuses, and CI checks have completed, skip Greptile extraction.
 	skipGreptile := false
 	hasGreptile := false
-	if crs, err := github.GetCheckRuns(owner, repo, pr.Head.SHA, token); err == nil {
+
+	crs, crErr := github.GetCheckRuns(owner, repo, pr.Head.SHA, token)
+	if crErr == nil {
 		for _, cr := range crs {
 			if strings.Contains(strings.ToLower(cr.Name), "greptile") {
 				hasGreptile = true
@@ -88,19 +90,22 @@ func run() int {
 			}
 		}
 	}
-	if !hasGreptile {
-		if sts, err := github.GetStatuses(owner, repo, pr.Head.SHA, token); err == nil {
-			for _, s := range sts {
-				if strings.Contains(strings.ToLower(s.Context), "greptile") {
-					hasGreptile = true
-					break
-				}
+
+	sts, stsErr := github.GetStatuses(owner, repo, pr.Head.SHA, token)
+	if stsErr == nil && !hasGreptile {
+		for _, s := range sts {
+			if strings.Contains(strings.ToLower(s.Context), "greptile") {
+				hasGreptile = true
+				break
 			}
 		}
 	}
-	if !hasGreptile {
-		// WaitForChecks already ensured checks are completed (no pending). Per policy
-		// (require_all_green = false), skip Greptile extraction when no Greptile entry exists.
+
+	// If both queries failed, be conservative and do not skip Greptile extraction.
+	if crErr != nil && stsErr != nil {
+		fmt.Fprintln(os.Stdout, "[Greptile] warning: failed to query check runs and statuses; will not skip Greptile extraction")
+	} else if !hasGreptile {
+		// At least one query succeeded and no Greptile entry was found.
 		skipGreptile = true
 		fmt.Fprintln(os.Stdout, "[Greptile] no Greptile CI status found; skipping Greptile description extraction")
 	}
