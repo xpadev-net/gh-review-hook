@@ -77,8 +77,7 @@ func run() int {
 	}
 
 	// Detect presence of a Greptile check/context using CI result's seen contexts.
-	// If none exists among observed check names/contexts, skip Greptile extraction.
-	skipGreptile := false
+	// Only skip Greptile if we observed CI checks but none contain "greptile".
 	hasGreptile := false
 	for _, c := range ciResult.SeenContexts {
 		if strings.Contains(strings.ToLower(c), "greptile") {
@@ -86,14 +85,13 @@ func run() int {
 			break
 		}
 	}
-	if !hasGreptile {
-		// No greptile context observed; skip Greptile extraction.
-		skipGreptile = true
+	if len(ciResult.SeenContexts) > 0 && !hasGreptile {
+		// Observed CI checks but no Greptile — skip Greptile extraction.
 		fmt.Fprintln(os.Stderr, "[Greptile] no Greptile CI status observed; skipping Greptile description extraction")
 	}
 
 	// Step 5: Wait for Greptile to update PR description
-	if !skipGreptile {
+	if hasGreptile || len(ciResult.SeenContexts) == 0 {
 		time.Sleep(greptileUpdateDelay)
 	}
 
@@ -106,7 +104,7 @@ func run() int {
 
 	// Step 8: Parse Greptile review
 	confidenceSection, prompt, found := "", "", false
-	if !skipGreptile {
+	if hasGreptile || len(ciResult.SeenContexts) == 0 {
 		confidenceSection, prompt, found = parser.ExtractGreptileReview(latestPR.Body)
 		lastReviewedCommit := parser.ExtractLastReviewedCommit(latestPR.Body)
 		if found && !parser.IsCommitReviewed(latestPR.Head.SHA, lastReviewedCommit) {
