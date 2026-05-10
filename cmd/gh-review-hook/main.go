@@ -103,11 +103,11 @@ func run() int {
 
 	// If both queries failed, be conservative and do not skip Greptile extraction.
 	if crErr != nil && stsErr != nil {
-		fmt.Fprintln(os.Stdout, "[Greptile] warning: failed to query check runs and statuses; will not skip Greptile extraction")
+		fmt.Fprintln(os.Stderr, "[Greptile] warning: failed to query check runs and statuses; will not skip Greptile extraction")
 	} else if !hasGreptile {
 		// At least one query succeeded and no Greptile entry was found.
 		skipGreptile = true
-		fmt.Fprintln(os.Stdout, "[Greptile] no Greptile CI status found; skipping Greptile description extraction")
+		fmt.Fprintln(os.Stderr, "[Greptile] no Greptile CI status found; skipping Greptile description extraction")
 	}
 
 	// Step 5: Wait for Greptile to update PR description
@@ -143,7 +143,7 @@ func run() int {
 			}
 			if reviewData == nil {
 				if errors.Is(err, greptile.ErrReviewTimeout) {
-					fmt.Fprintln(os.Stdout, "[Greptile] description review not found, falling back to comment mode")
+					fmt.Fprintln(os.Stderr, "[Greptile] description review not found, falling back to comment mode")
 				}
 				reviewData, err = greptile.WaitForReview(owner, repo, pr.Number, latestPR.Head.SHA, token, os.Stdout)
 				if err != nil {
