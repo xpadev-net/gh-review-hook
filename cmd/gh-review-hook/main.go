@@ -141,11 +141,6 @@ func run() int {
 				found = reviewData.Found
 			}
 		}
-	} else {
-		// Skipping Greptile extraction because no Greptile CI status was found.
-		found = false
-		confidenceSection = ""
-		prompt = ""
 	}
 
 	// Step 9: Determine output and exit code
