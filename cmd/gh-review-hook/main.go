@@ -76,8 +76,39 @@ func run() int {
 		return 1
 	}
 
+	// Detect presence of a Greptile check/context. If none exists among check runs or
+	// commit statuses, and CI checks have completed, skip Greptile extraction.
+	skipGreptile := false
+	hasGreptile := false
+	if crs, err := github.GetCheckRuns(owner, repo, pr.Head.SHA, token); err == nil {
+		for _, cr := range crs {
+			if strings.Contains(strings.ToLower(cr.Name), "greptile") {
+				hasGreptile = true
+				break
+			}
+		}
+	}
+	if !hasGreptile {
+		if sts, err := github.GetStatuses(owner, repo, pr.Head.SHA, token); err == nil {
+			for _, s := range sts {
+				if strings.Contains(strings.ToLower(s.Context), "greptile") {
+					hasGreptile = true
+					break
+				}
+			}
+		}
+	}
+	if !hasGreptile {
+		// WaitForChecks already ensured checks are completed (no pending). Per policy
+		// (require_all_green = false), skip Greptile extraction when no Greptile entry exists.
+		skipGreptile = true
+		fmt.Fprintln(os.Stdout, "[Greptile] no Greptile CI status found; skipping Greptile description extraction")
+	}
+
 	// Step 5: Wait for Greptile to update PR description
-	time.Sleep(greptileUpdateDelay)
+	if !skipGreptile {
+		time.Sleep(greptileUpdateDelay)
+	}
 
 	// Step 6: Fetch latest PR body
 	latestPR, err := github.GetPR(owner, repo, pr.Number, token)
@@ -87,39 +118,47 @@ func run() int {
 	}
 
 	// Step 8: Parse Greptile review
-	confidenceSection, prompt, found := parser.ExtractGreptileReview(latestPR.Body)
-	lastReviewedCommit := parser.ExtractLastReviewedCommit(latestPR.Body)
-	if found && !parser.IsCommitReviewed(latestPR.Head.SHA, lastReviewedCommit) {
+	confidenceSection, prompt, found := "", "", false
+	if !skipGreptile {
+		confidenceSection, prompt, found = parser.ExtractGreptileReview(latestPR.Body)
+		lastReviewedCommit := parser.ExtractLastReviewedCommit(latestPR.Body)
+		if found && !parser.IsCommitReviewed(latestPR.Head.SHA, lastReviewedCommit) {
+			found = false
+			confidenceSection = ""
+			prompt = ""
+		}
+
+		if !found {
+			// Prefer PR description mode first; some repositories still publish the
+			// canonical Greptile review in PR body updates.
+			reviewData, err := greptile.WaitForReviewInPRBody(owner, repo, pr.Number, latestPR.Head.SHA, token, os.Stdout)
+			if err != nil && !errors.Is(err, greptile.ErrReviewTimeout) {
+				fmt.Fprintln(os.Stderr, err.Error())
+				return 1
+			}
+			if reviewData == nil {
+				if errors.Is(err, greptile.ErrReviewTimeout) {
+					fmt.Fprintln(os.Stdout, "[Greptile] description review not found, falling back to comment mode")
+				}
+				reviewData, err = greptile.WaitForReview(owner, repo, pr.Number, latestPR.Head.SHA, token, os.Stdout)
+				if err != nil {
+					if !errors.Is(err, greptile.ErrReviewTimeout) {
+						fmt.Fprintln(os.Stderr, err.Error())
+						return 1
+					}
+				}
+			}
+			if reviewData != nil {
+				confidenceSection = reviewData.ConfidenceSection
+				prompt = reviewData.Prompt
+				found = reviewData.Found
+			}
+		}
+	} else {
+		// Skipping Greptile extraction because no Greptile CI status was found.
 		found = false
 		confidenceSection = ""
 		prompt = ""
-	}
-
-	if !found {
-		// Prefer PR description mode first; some repositories still publish the
-		// canonical Greptile review in PR body updates.
-		reviewData, err := greptile.WaitForReviewInPRBody(owner, repo, pr.Number, latestPR.Head.SHA, token, os.Stdout)
-		if err != nil && !errors.Is(err, greptile.ErrReviewTimeout) {
-			fmt.Fprintln(os.Stderr, err.Error())
-			return 1
-		}
-		if reviewData == nil {
-			if errors.Is(err, greptile.ErrReviewTimeout) {
-				fmt.Fprintln(os.Stdout, "[Greptile] description review not found, falling back to comment mode")
-			}
-			reviewData, err = greptile.WaitForReview(owner, repo, pr.Number, latestPR.Head.SHA, token, os.Stdout)
-			if err != nil {
-				if !errors.Is(err, greptile.ErrReviewTimeout) {
-					fmt.Fprintln(os.Stderr, err.Error())
-					return 1
-				}
-			}
-		}
-		if reviewData != nil {
-			confidenceSection = reviewData.ConfidenceSection
-			prompt = reviewData.Prompt
-			found = reviewData.Found
-		}
 	}
 
 	// Step 9: Determine output and exit code
