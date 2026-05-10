@@ -76,38 +76,20 @@ func run() int {
 		return 1
 	}
 
-	// Detect presence of a Greptile check/context. If none exists among check runs or
-	// commit statuses, and CI checks have completed, skip Greptile extraction.
+	// Detect presence of a Greptile check/context using CI result's seen contexts.
+	// If none exists among observed check names/contexts, skip Greptile extraction.
 	skipGreptile := false
 	hasGreptile := false
-
-	crs, crErr := github.GetCheckRuns(owner, repo, pr.Head.SHA, token)
-	if crErr == nil {
-		for _, cr := range crs {
-			if strings.Contains(strings.ToLower(cr.Name), "greptile") {
-				hasGreptile = true
-				break
-			}
+	for _, c := range ciResult.SeenContexts {
+		if strings.Contains(strings.ToLower(c), "greptile") {
+			hasGreptile = true
+			break
 		}
 	}
-
-	sts, stsErr := github.GetStatuses(owner, repo, pr.Head.SHA, token)
-	if stsErr == nil && !hasGreptile {
-		for _, s := range sts {
-			if strings.Contains(strings.ToLower(s.Context), "greptile") {
-				hasGreptile = true
-				break
-			}
-		}
-	}
-
-	// If both queries failed, be conservative and do not skip Greptile extraction.
-	if crErr != nil && stsErr != nil {
-		fmt.Fprintln(os.Stderr, "[Greptile] warning: failed to query check runs and statuses; will not skip Greptile extraction")
-	} else if !hasGreptile {
-		// At least one query succeeded and no Greptile entry was found.
+	if !hasGreptile {
+		// No greptile context observed; skip Greptile extraction.
 		skipGreptile = true
-		fmt.Fprintln(os.Stderr, "[Greptile] no Greptile CI status found; skipping Greptile description extraction")
+		fmt.Fprintln(os.Stderr, "[Greptile] no Greptile CI status observed; skipping Greptile description extraction")
 	}
 
 	// Step 5: Wait for Greptile to update PR description

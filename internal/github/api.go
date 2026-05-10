@@ -149,6 +149,7 @@ type CommitStatus struct {
 type CIResult struct {
 	AllGreen     bool     // true if all checks passed
 	FailedChecks []string // names of checks that did not succeed (empty if AllGreen)
+	SeenContexts []string // list of check run names and status contexts observed
 }
 
 // FindPR finds an open PR for the given branch. Returns nil if no PR is found.
@@ -394,6 +395,16 @@ func WaitForChecks(owner, repo, sha, token string, logw io.Writer) (*CIResult, e
 				result.FailedChecks = append(result.FailedChecks, s.Context)
 			}
 		}
+
+		// Record seen check names and status contexts to avoid refetching later.
+		var seen []string
+		for _, cr := range dedupCheckRuns {
+			seen = append(seen, cr.Name)
+		}
+		for _, s := range dedupStatuses {
+			seen = append(seen, s.Context)
+		}
+		result.SeenContexts = seen
 
 		return result, nil
 	}
