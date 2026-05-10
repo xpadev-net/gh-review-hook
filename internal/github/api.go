@@ -114,6 +114,17 @@ type IssueComment struct {
 	} `json:"user"`
 }
 
+// PullRequestReview represents a GitHub PR review (APPROVED, CHANGES_REQUESTED, COMMENTED, DISMISSED, PENDING).
+type PullRequestReview struct {
+	ID          int64      `json:"id"`
+	State       string     `json:"state"`
+	Body        string     `json:"body"`
+	SubmittedAt *time.Time `json:"submitted_at"`
+	User        struct {
+		Login string `json:"login"`
+	} `json:"user"`
+}
+
 // Commit represents the subset of commit data needed for timing checks.
 type Commit struct {
 	Commit struct {
@@ -183,6 +194,25 @@ func GetPRComments(owner, repo string, number int, token string) ([]IssueComment
 // GetReviewComments fetches all PR review comments, handling pagination.
 func GetReviewComments(owner, repo string, number int, token string) ([]IssueComment, error) {
 	return getComments[IssueComment](fmt.Sprintf("%s/repos/%s/%s/pulls/%d/comments?per_page=100&page=", apiBase, owner, repo, number), token)
+}
+
+// GetPullRequestReviews fetches all PR reviews (submitted and pending), handling pagination.
+func GetPullRequestReviews(owner, repo string, number int, token string) ([]PullRequestReview, error) {
+	var all []PullRequestReview
+	page := 1
+	for {
+		url := fmt.Sprintf("%s/repos/%s/%s/pulls/%d/reviews?per_page=100&page=%d", apiBase, owner, repo, number, page)
+		var reviews []PullRequestReview
+		if err := apiGet(url, token, &reviews); err != nil {
+			return nil, err
+		}
+		if len(reviews) == 0 {
+			break
+		}
+		all = append(all, reviews...)
+		page++
+	}
+	return all, nil
 }
 
 func getComments[T any](baseURL, token string) ([]T, error) {

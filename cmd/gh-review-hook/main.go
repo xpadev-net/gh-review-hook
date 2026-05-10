@@ -211,7 +211,37 @@ func run() int {
 		feedbackParts = append(feedbackParts, p)
 	}
 
-	// Step 11: Check for merge conflicts with target branch
+	// Step 11: Fetch and include unsupported PR reviews (submitted after head commit)
+	reviews, err := github.GetPullRequestReviews(owner, repo, latestPR.Number, token)
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "failed to fetch PR reviews: %v\n", err)
+		return 1
+	}
+	for _, review := range reviews {
+		// Skip PENDING reviews (not submitted yet) and reviews before head commit
+		if review.State == "PENDING" || review.SubmittedAt == nil {
+			continue
+		}
+		if review.SubmittedAt.Before(headCommitTime) {
+			continue
+		}
+		// Format review: "Review from {username} ({state}):\n{body}" or "Review from {username}: {state}" if body is empty
+		var sb strings.Builder
+		sb.WriteString("Review from ")
+		sb.WriteString(review.User.Login)
+		if review.Body != "" {
+			sb.WriteString(" (")
+			sb.WriteString(review.State)
+			sb.WriteString("):\n")
+			sb.WriteString(review.Body)
+		} else {
+			sb.WriteString(": ")
+			sb.WriteString(review.State)
+		}
+		feedbackParts = append(feedbackParts, sb.String())
+	}
+
+	// Step 12: Check for merge conflicts with target branch
 	if latestPR.Head.Ref != "" && latestPR.Base.Ref != "" {
 		conflictFiles, err := git.ConflictFiles(latestPR.Head.Ref, latestPR.Base.Ref)
 		if err != nil {
