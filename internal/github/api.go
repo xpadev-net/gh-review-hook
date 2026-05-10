@@ -397,12 +397,14 @@ func WaitForChecks(owner, repo, sha, token string, logw io.Writer) (*CIResult, e
 		}
 
 		// Record seen check names and status contexts to avoid refetching later.
+		// Use the accumulated prev-maps so any name observed across all polls is
+		// captured, not just those present in the final API response.
 		var seen []string
-		for _, cr := range dedupCheckRuns {
-			seen = append(seen, cr.Name)
+		for name := range prevCheckRuns {
+			seen = append(seen, name)
 		}
-		for _, s := range dedupStatuses {
-			seen = append(seen, s.Context)
+		for ctx := range prevStatuses {
+			seen = append(seen, ctx)
 		}
 		result.SeenContexts = seen
 
