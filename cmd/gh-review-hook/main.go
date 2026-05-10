@@ -70,14 +70,30 @@ func run() int {
 	}
 
 	// Step 4: Wait for CI checks to complete
-	ciResult, err := github.WaitForChecks(owner, repo, pr.Head.SHA, token, os.Stdout)
+	ciResult, err := github.WaitForChecks(owner, repo, pr.Head.SHA, token, os.Stderr)
 	if err != nil {
 		fmt.Fprintln(os.Stderr, err.Error())
 		return 1
 	}
 
+	// Detect presence of a Greptile check/context using CI result's seen contexts.
+	// Only skip Greptile if we observed CI checks but none contain "greptile".
+	hasGreptile := false
+	for _, c := range ciResult.SeenContexts {
+		if strings.Contains(strings.ToLower(c), "greptile") {
+			hasGreptile = true
+			break
+		}
+	}
+	if len(ciResult.SeenContexts) > 0 && !hasGreptile {
+		// Observed CI checks but no Greptile — skip Greptile extraction.
+		fmt.Fprintln(os.Stderr, "[Greptile] no Greptile CI status observed; skipping Greptile description extraction")
+	}
+
 	// Step 5: Wait for Greptile to update PR description
-	time.Sleep(greptileUpdateDelay)
+	if hasGreptile || len(ciResult.SeenContexts) == 0 {
+		time.Sleep(greptileUpdateDelay)
+	}
 
 	// Step 6: Fetch latest PR body
 	latestPR, err := github.GetPR(owner, repo, pr.Number, token)
@@ -87,38 +103,41 @@ func run() int {
 	}
 
 	// Step 8: Parse Greptile review
-	confidenceSection, prompt, found := parser.ExtractGreptileReview(latestPR.Body)
-	lastReviewedCommit := parser.ExtractLastReviewedCommit(latestPR.Body)
-	if found && !parser.IsCommitReviewed(latestPR.Head.SHA, lastReviewedCommit) {
-		found = false
-		confidenceSection = ""
-		prompt = ""
-	}
-
-	if !found {
-		// Prefer PR description mode first; some repositories still publish the
-		// canonical Greptile review in PR body updates.
-		reviewData, err := greptile.WaitForReviewInPRBody(owner, repo, pr.Number, latestPR.Head.SHA, token, os.Stdout)
-		if err != nil && !errors.Is(err, greptile.ErrReviewTimeout) {
-			fmt.Fprintln(os.Stderr, err.Error())
-			return 1
+	confidenceSection, prompt, found := "", "", false
+	if hasGreptile || len(ciResult.SeenContexts) == 0 {
+		confidenceSection, prompt, found = parser.ExtractGreptileReview(latestPR.Body)
+		lastReviewedCommit := parser.ExtractLastReviewedCommit(latestPR.Body)
+		if found && !parser.IsCommitReviewed(latestPR.Head.SHA, lastReviewedCommit) {
+			found = false
+			confidenceSection = ""
+			prompt = ""
 		}
-		if reviewData == nil {
-			if errors.Is(err, greptile.ErrReviewTimeout) {
-				fmt.Fprintln(os.Stdout, "[Greptile] description review not found, falling back to comment mode")
+
+		if !found {
+			// Prefer PR description mode first; some repositories still publish the
+			// canonical Greptile review in PR body updates.
+			reviewData, err := greptile.WaitForReviewInPRBody(owner, repo, pr.Number, latestPR.Head.SHA, token, os.Stderr)
+			if err != nil && !errors.Is(err, greptile.ErrReviewTimeout) {
+				fmt.Fprintln(os.Stderr, err.Error())
+				return 1
 			}
-			reviewData, err = greptile.WaitForReview(owner, repo, pr.Number, latestPR.Head.SHA, token, os.Stdout)
-			if err != nil {
-				if !errors.Is(err, greptile.ErrReviewTimeout) {
-					fmt.Fprintln(os.Stderr, err.Error())
-					return 1
+			if reviewData == nil {
+				if errors.Is(err, greptile.ErrReviewTimeout) {
+					fmt.Fprintln(os.Stderr, "[Greptile] description review not found, falling back to comment mode")
+				}
+				reviewData, err = greptile.WaitForReview(owner, repo, pr.Number, latestPR.Head.SHA, token, os.Stderr)
+				if err != nil {
+					if !errors.Is(err, greptile.ErrReviewTimeout) {
+						fmt.Fprintln(os.Stderr, err.Error())
+						return 1
+					}
 				}
 			}
-		}
-		if reviewData != nil {
-			confidenceSection = reviewData.ConfidenceSection
-			prompt = reviewData.Prompt
-			found = reviewData.Found
+			if reviewData != nil {
+				confidenceSection = reviewData.ConfidenceSection
+				prompt = reviewData.Prompt
+				found = reviewData.Found
+			}
 		}
 	}
 
