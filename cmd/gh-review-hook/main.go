@@ -220,18 +220,25 @@ func run() int {
 		if commentTime.Before(headCommitTime) {
 			continue
 		}
-		if comment.Body == "" {
+		body := strings.TrimSpace(comment.Body)
+		if body == "" {
 			continue
 		}
-		login := comment.User.Login
-		if login == "coderabbitai[bot]" || login == "greptile-apps[bot]" {
+		// Skip the Greptile trigger comment — it may be posted by the caller's own
+		// token (a human PAT) when waitForReview fires, so the poster's login won't
+		// match the greptile-apps[bot] skip below.
+		if strings.EqualFold(body, "@greptile review") {
+			continue
+		}
+		loginLower := strings.ToLower(strings.TrimSpace(comment.User.Login))
+		if loginLower == "coderabbitai[bot]" || loginLower == "greptile-apps[bot]" {
 			continue
 		}
 		var sb strings.Builder
 		sb.WriteString("Comment from ")
-		sb.WriteString(login)
+		sb.WriteString(comment.User.Login)
 		sb.WriteString(":\n")
-		sb.WriteString(comment.Body)
+		sb.WriteString(body)
 		feedbackParts = append(feedbackParts, sb.String())
 	}
 
