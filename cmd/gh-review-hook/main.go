@@ -211,18 +211,24 @@ func run() int {
 		feedbackParts = append(feedbackParts, p)
 	}
 
-	// Step 11: Fetch and include unsupported PR reviews (submitted after head commit)
+	// Step 11: Fetch and include unsupported PR reviews for the current HEAD commit
 	reviews, err := github.GetPullRequestReviews(owner, repo, latestPR.Number, token)
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "failed to fetch PR reviews: %v\n", err)
 		return 1
 	}
 	for _, review := range reviews {
-		// Skip PENDING reviews (not submitted yet) and reviews before head commit
+		// Skip PENDING reviews (not submitted yet)
 		if review.State == "PENDING" || review.SubmittedAt == nil {
 			continue
 		}
-		if review.SubmittedAt.Before(headCommitTime) {
+		// Skip reviews not targeting the current HEAD commit
+		if review.CommitID != latestPR.Head.SHA {
+			continue
+		}
+		// Skip COMMENTED reviews with no top-level body: they consist of inline diff
+		// comments only, which are already captured via GetReviewComments above.
+		if review.State == "COMMENTED" && review.Body == "" {
 			continue
 		}
 		// Format review: "Review from {username} ({state}):\n{body}" or "Review from {username}: {state}" if body is empty
