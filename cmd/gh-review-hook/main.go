@@ -91,7 +91,7 @@ func run() int {
 	}
 
 	// Step 5: Wait for Greptile to update PR description
-	if hasGreptile || len(ciResult.SeenContexts) == 0 {
+	if hasGreptile {
 		time.Sleep(greptileUpdateDelay)
 	}
 
@@ -104,7 +104,7 @@ func run() int {
 
 	// Step 8: Parse Greptile review
 	confidenceSection, prompt, found := "", "", false
-	if hasGreptile || len(ciResult.SeenContexts) == 0 {
+	if hasGreptile {
 		confidenceSection, prompt, found = parser.ExtractGreptileReview(latestPR.Body)
 		lastReviewedCommit := parser.ExtractLastReviewedCommit(latestPR.Body)
 		if found && !parser.IsCommitReviewed(latestPR.Head.SHA, lastReviewedCommit) {
