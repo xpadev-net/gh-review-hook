@@ -197,6 +197,9 @@ func run() int {
 		if !commentTime.After(headCommitTime) {
 			continue
 		}
+		if strings.ToLower(strings.TrimSpace(comment.User.Login)) != "coderabbitai[bot]" {
+			continue
+		}
 		p := parser.ExtractCodeRabbitPrompt(comment.Body)
 		if p == "" || seenPrompts[p] {
 			continue
