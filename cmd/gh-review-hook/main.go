@@ -194,7 +194,7 @@ func run() int {
 		if comment.UpdatedAt.After(commentTime) {
 			commentTime = comment.UpdatedAt
 		}
-		if commentTime.Before(headCommitTime) {
+		if !commentTime.After(headCommitTime) {
 			continue
 		}
 		p := parser.ExtractCodeRabbitPrompt(comment.Body)
