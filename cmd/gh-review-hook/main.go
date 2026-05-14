@@ -185,16 +185,33 @@ func run() int {
 		fmt.Fprintf(os.Stderr, "failed to fetch PR review comments: %v\n", err)
 		return 1
 	}
-	allComments := append(issueComments, reviewComments...)
-
 	var codeRabbitPrompts []string
 	seenPrompts := make(map[string]bool)
-	for _, comment := range allComments {
+
+	for _, comment := range issueComments {
 		commentTime := comment.CreatedAt
 		if comment.UpdatedAt.After(commentTime) {
 			commentTime = comment.UpdatedAt
 		}
 		if !commentTime.After(headCommitTime) {
+			continue
+		}
+		if strings.ToLower(strings.TrimSpace(comment.User.Login)) != "coderabbitai[bot]" {
+			continue
+		}
+		p := parser.ExtractCodeRabbitPrompt(comment.Body)
+		if p == "" || seenPrompts[p] {
+			continue
+		}
+		seenPrompts[p] = true
+		codeRabbitPrompts = append(codeRabbitPrompts, p)
+	}
+
+	// For inline review comments use only created_at — updated_at can be bumped by
+	// GitHub remapping the comment to a newer commit or by reactions, neither of
+	// which indicates new actionable content.
+	for _, comment := range reviewComments {
+		if !comment.CreatedAt.After(headCommitTime) {
 			continue
 		}
 		if strings.ToLower(strings.TrimSpace(comment.User.Login)) != "coderabbitai[bot]" {
