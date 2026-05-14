@@ -194,7 +194,10 @@ func run() int {
 		if comment.UpdatedAt.After(commentTime) {
 			commentTime = comment.UpdatedAt
 		}
-		if commentTime.Before(headCommitTime) {
+		if !commentTime.After(headCommitTime) {
+			continue
+		}
+		if strings.ToLower(strings.TrimSpace(comment.User.Login)) != "coderabbitai[bot]" {
 			continue
 		}
 		p := parser.ExtractCodeRabbitPrompt(comment.Body)
@@ -209,6 +212,37 @@ func run() int {
 	// Greptile's confidence score, so they are not gated by is5of5.
 	for _, p := range codeRabbitPrompts {
 		feedbackParts = append(feedbackParts, p)
+	}
+
+	// Regular issue comments newer than the head commit (skip already-handled bots)
+	for _, comment := range issueComments {
+		commentTime := comment.CreatedAt
+		if comment.UpdatedAt.After(commentTime) {
+			commentTime = comment.UpdatedAt
+		}
+		if !commentTime.After(headCommitTime) {
+			continue
+		}
+		body := strings.TrimSpace(comment.Body)
+		if body == "" {
+			continue
+		}
+		// Skip the Greptile trigger comment — it may be posted by the caller's own
+		// token (a human PAT) when waitForReview fires, so the poster's login won't
+		// match the greptile-apps[bot] skip below.
+		if strings.EqualFold(body, "@greptile review") {
+			continue
+		}
+		loginLower := strings.ToLower(strings.TrimSpace(comment.User.Login))
+		if loginLower == "coderabbitai[bot]" || loginLower == "greptile-apps[bot]" {
+			continue
+		}
+		var sb strings.Builder
+		sb.WriteString("Comment from ")
+		sb.WriteString(comment.User.Login)
+		sb.WriteString(":\n")
+		sb.WriteString(body)
+		feedbackParts = append(feedbackParts, sb.String())
 	}
 
 	// Step 11: Fetch and include unsupported PR reviews for the current HEAD commit
