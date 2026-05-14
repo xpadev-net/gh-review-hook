@@ -91,7 +91,7 @@ func run() int {
 	}
 
 	// Step 5: Wait for Greptile to update PR description
-	if hasGreptile || len(ciResult.SeenContexts) == 0 {
+	if hasGreptile {
 		time.Sleep(greptileUpdateDelay)
 	}
 
@@ -104,7 +104,7 @@ func run() int {
 
 	// Step 8: Parse Greptile review
 	confidenceSection, prompt, found := "", "", false
-	if hasGreptile || len(ciResult.SeenContexts) == 0 {
+	if hasGreptile {
 		confidenceSection, prompt, found = parser.ExtractGreptileReview(latestPR.Body)
 		lastReviewedCommit := parser.ExtractLastReviewedCommit(latestPR.Body)
 		if found && !parser.IsCommitReviewed(latestPR.Head.SHA, lastReviewedCommit) {
@@ -211,18 +211,26 @@ func run() int {
 		feedbackParts = append(feedbackParts, p)
 	}
 
-	// Step 11: Fetch and include unsupported PR reviews (submitted after head commit)
+	// Step 11: Fetch and include unsupported PR reviews for the current HEAD commit
 	reviews, err := github.GetPullRequestReviews(owner, repo, latestPR.Number, token)
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "failed to fetch PR reviews: %v\n", err)
 		return 1
 	}
 	for _, review := range reviews {
-		// Skip PENDING reviews (not submitted yet) and reviews before head commit
+		// Skip PENDING reviews (not submitted yet)
 		if review.State == "PENDING" || review.SubmittedAt == nil {
 			continue
 		}
-		if review.SubmittedAt.Before(headCommitTime) {
+		// Skip reviews not targeting the current HEAD commit
+		if review.CommitID != latestPR.Head.SHA {
+			continue
+		}
+		// Only surface actionable feedback: CHANGES_REQUESTED (always) and COMMENTED
+		// with a top-level body. APPROVED/DISMISSED are not blocking; COMMENTED
+		// without a body consists only of inline diff comments already captured
+		// via GetReviewComments above.
+		if review.State != "CHANGES_REQUESTED" && !(review.State == "COMMENTED" && review.Body != "") {
 			continue
 		}
 		// Format review: "Review from {username} ({state}):\n{body}" or "Review from {username}: {state}" if body is empty
