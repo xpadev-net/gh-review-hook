@@ -226,9 +226,11 @@ func run() int {
 		if review.CommitID != latestPR.Head.SHA {
 			continue
 		}
-		// Skip COMMENTED reviews with no top-level body: they consist of inline diff
-		// comments only, which are already captured via GetReviewComments above.
-		if review.State == "COMMENTED" && review.Body == "" {
+		// Only surface actionable feedback: CHANGES_REQUESTED (always) and COMMENTED
+		// with a top-level body. APPROVED/DISMISSED are not blocking; COMMENTED
+		// without a body consists only of inline diff comments already captured
+		// via GetReviewComments above.
+		if review.State != "CHANGES_REQUESTED" && !(review.State == "COMMENTED" && review.Body != "") {
 			continue
 		}
 		// Format review: "Review from {username} ({state}):\n{body}" or "Review from {username}: {state}" if body is empty
