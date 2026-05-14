@@ -211,6 +211,30 @@ func run() int {
 		feedbackParts = append(feedbackParts, p)
 	}
 
+	// Regular issue comments newer than the head commit (skip already-handled bots)
+	for _, comment := range issueComments {
+		commentTime := comment.CreatedAt
+		if comment.UpdatedAt.After(commentTime) {
+			commentTime = comment.UpdatedAt
+		}
+		if commentTime.Before(headCommitTime) {
+			continue
+		}
+		if comment.Body == "" {
+			continue
+		}
+		login := comment.User.Login
+		if login == "coderabbitai[bot]" || login == "greptile-apps[bot]" {
+			continue
+		}
+		var sb strings.Builder
+		sb.WriteString("Comment from ")
+		sb.WriteString(login)
+		sb.WriteString(":\n")
+		sb.WriteString(comment.Body)
+		feedbackParts = append(feedbackParts, sb.String())
+	}
+
 	// Step 11: Fetch and include unsupported PR reviews for the current HEAD commit
 	reviews, err := github.GetPullRequestReviews(owner, repo, latestPR.Number, token)
 	if err != nil {
