@@ -331,6 +331,9 @@ func actionableReviewCommentsByReviewID(comments []github.PullRequestReviewComme
 		if skipIDs[comment.ID] {
 			continue
 		}
+		if strings.ToLower(strings.TrimSpace(comment.User.Login)) == "greptile-apps[bot]" {
+			continue
+		}
 		if strings.TrimSpace(comment.Body) == "" {
 			continue
 		}

@@ -107,6 +107,7 @@ func TestActionableReviewCommentsByReviewID_KeepsCurrentRepliesWithTheirOwnRevie
 		newReviewComment(5, 100, "skipped comment", headTime.Add(4*time.Minute)),
 		newReviewComment(6, 100, "   ", headTime.Add(5*time.Minute)),
 		newReviewReply(7, 300, 1, "reply comment", headTime.Add(6*time.Minute)),
+		newReviewCommentFrom(8, 100, "bot comment", "greptile-apps[bot]", headTime.Add(7*time.Minute)),
 	}
 
 	got := actionableReviewCommentsByReviewID(comments, headTime, map[int64]bool{5: true})
@@ -187,12 +188,16 @@ func newPullRequestReview(id int64, login, state, body string) github.PullReques
 }
 
 func newReviewComment(id, reviewID int64, body string, createdAt time.Time) github.PullRequestReviewComment {
+	return newReviewCommentFrom(id, reviewID, body, "commenter", createdAt)
+}
+
+func newReviewCommentFrom(id, reviewID int64, body, login string, createdAt time.Time) github.PullRequestReviewComment {
 	var comment github.PullRequestReviewComment
 	comment.ID = id
 	comment.PullRequestReviewID = reviewID
 	comment.Body = body
 	comment.CreatedAt = createdAt
-	comment.User.Login = "commenter"
+	comment.User.Login = login
 	return comment
 }
 
