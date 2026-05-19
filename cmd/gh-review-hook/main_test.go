@@ -208,6 +208,48 @@ func TestIsActionablePullRequestReview_AllowsHumanReviewWithComments(t *testing.
 	}
 }
 
+func TestPullRequestReviewFeedback_SurfacesCommentsWhenReviewIsFiltered(t *testing.T) {
+	const headSHA = "head-sha"
+	now := time.Now()
+	currentReview := newPullRequestReview(100, "reviewer", "COMMENTED", "current review")
+	currentReview.CommitID = headSHA
+	oldReview := newPullRequestReview(200, "reviewer", "COMMENTED", "old review")
+	oldReview.CommitID = "old-sha"
+	olderIDReview := newPullRequestReview(150, "reviewer", "COMMENTED", "old review with lower ID")
+	olderIDReview.CommitID = "old-sha"
+	approvedReview := newPullRequestReview(300, "reviewer", "APPROVED", "")
+	approvedReview.CommitID = headSHA
+	dismissedReview := newPullRequestReview(400, "reviewer", "DISMISSED", "")
+	dismissedReview.CommitID = "old-sha"
+	commentsByReviewID := map[int64][]github.PullRequestReviewComment{
+		100: {newReviewComment(1, 100, "current inline feedback", now)},
+		200: {newReviewComment(2, 200, "reply on old thread", now.Add(time.Minute))},
+		150: {newReviewComment(5, 150, "same-time old thread", now.Add(time.Minute))},
+		300: {newReviewComment(3, 300, "approved review inline feedback", now.Add(2*time.Minute))},
+		400: {newReviewComment(4, 400, "dismissed review inline feedback", now.Add(3*time.Minute))},
+	}
+
+	got := pullRequestReviewFeedback([]github.PullRequestReview{currentReview, oldReview, olderIDReview, approvedReview, dismissedReview}, commentsByReviewID, headSHA)
+
+	if len(got) != 3 {
+		t.Fatalf("feedback count = %d, want 3: %#v", len(got), got)
+	}
+	if !strings.Contains(got[0], "current review") || !strings.Contains(got[0], "current inline feedback") {
+		t.Fatalf("first feedback should contain actionable current review and comments:\n%s", got[0])
+	}
+	if !strings.Contains(got[1], "Review comments from commenter:") || !strings.Contains(got[1], "same-time old thread") {
+		t.Fatalf("second feedback should contain lower-ID standalone old-thread comment:\n%s", got[1])
+	}
+	if !strings.Contains(got[2], "Review comments from commenter:") || !strings.Contains(got[2], "reply on old thread") {
+		t.Fatalf("third feedback should contain standalone old-thread comment:\n%s", got[2])
+	}
+	for _, feedback := range got {
+		if strings.Contains(feedback, "approved review inline feedback") || strings.Contains(feedback, "dismissed review inline feedback") {
+			t.Fatalf("non-blocking current approved/dismissed review comments should not be standalone feedback: %#v", got)
+		}
+	}
+}
+
 func TestReviewCommentLocation_UsesOriginalRangeForOutdatedComment(t *testing.T) {
 	comment := newReviewComment(1, 100, "inline feedback", time.Now())
 	comment.Path = "src/example.go"

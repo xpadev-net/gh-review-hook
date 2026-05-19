@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"net/url"
 	"os"
+	"sort"
 	"strconv"
 	"strings"
 	"time"
@@ -275,13 +276,7 @@ func run() int {
 		return 1
 	}
 	reviewCommentsByReviewID := actionableReviewCommentsByReviewID(reviewComments, headCommitTime)
-	for _, review := range reviews {
-		comments := reviewCommentsByReviewID[review.ID]
-		if !isActionablePullRequestReview(review, comments, latestPR.Head.SHA) {
-			continue
-		}
-		feedbackParts = append(feedbackParts, formatPullRequestReview(review, comments))
-	}
+	feedbackParts = append(feedbackParts, pullRequestReviewFeedback(reviews, reviewCommentsByReviewID, latestPR.Head.SHA)...)
 
 	// Step 12: Check for merge conflicts with target branch
 	if latestPR.Head.Ref != "" && latestPR.Base.Ref != "" {
@@ -308,6 +303,71 @@ func run() int {
 	}
 
 	return 0
+}
+
+func pullRequestReviewFeedback(reviews []github.PullRequestReview, reviewCommentsByReviewID map[int64][]github.PullRequestReviewComment, headSHA string) []string {
+	var feedback []string
+	reviewsByID := make(map[int64]github.PullRequestReview)
+	for _, review := range reviews {
+		reviewsByID[review.ID] = review
+	}
+	consumedReviewIDs := make(map[int64]bool)
+	for _, review := range reviews {
+		comments := reviewCommentsByReviewID[review.ID]
+		if !isActionablePullRequestReview(review, comments, headSHA) {
+			continue
+		}
+		feedback = append(feedback, formatPullRequestReview(review, comments))
+		consumedReviewIDs[review.ID] = true
+	}
+	var reviewIDs []int64
+	for reviewID, comments := range reviewCommentsByReviewID {
+		if consumedReviewIDs[reviewID] {
+			continue
+		}
+		if !shouldSurfaceStandaloneReviewComments(reviewsByID[reviewID], comments, headSHA) {
+			continue
+		}
+		reviewIDs = append(reviewIDs, reviewID)
+	}
+	sort.Slice(reviewIDs, func(i, j int) bool {
+		leftTime := earliestReviewCommentTime(reviewCommentsByReviewID[reviewIDs[i]])
+		rightTime := earliestReviewCommentTime(reviewCommentsByReviewID[reviewIDs[j]])
+		if leftTime.Equal(rightTime) {
+			return reviewIDs[i] < reviewIDs[j]
+		}
+		return leftTime.Before(rightTime)
+	})
+	for _, reviewID := range reviewIDs {
+		feedback = append(feedback, formatPullRequestReviewComments(reviewCommentsByReviewID[reviewID]))
+	}
+	return feedback
+}
+
+func shouldSurfaceStandaloneReviewComments(review github.PullRequestReview, comments []github.PullRequestReviewComment, headSHA string) bool {
+	if len(comments) == 0 {
+		return false
+	}
+	if review.ID == 0 {
+		return true
+	}
+	if review.State == "DISMISSED" || isHandledReviewBot(review.User.Login) {
+		return false
+	}
+	return review.CommitID != headSHA
+}
+
+func earliestReviewCommentTime(comments []github.PullRequestReviewComment) time.Time {
+	if len(comments) == 0 {
+		return time.Time{}
+	}
+	earliest := comments[0].CreatedAt
+	for _, comment := range comments[1:] {
+		if comment.CreatedAt.Before(earliest) {
+			earliest = comment.CreatedAt
+		}
+	}
+	return earliest
 }
 
 func isActionablePullRequestReview(review github.PullRequestReview, comments []github.PullRequestReviewComment, headSHA string) bool {
@@ -380,6 +440,42 @@ func formatPullRequestReview(review github.PullRequestReview, comments []github.
 		}
 	}
 	return sb.String()
+}
+
+func formatPullRequestReviewComments(comments []github.PullRequestReviewComment) string {
+	var sb strings.Builder
+	sb.WriteString("Review comments")
+	if login := commonReviewCommentLogin(comments); login != "" {
+		sb.WriteString(" from ")
+		sb.WriteString(login)
+	}
+	sb.WriteString(":")
+	for _, comment := range comments {
+		sb.WriteString("\n- ")
+		location := reviewCommentLocation(comment)
+		if location != "" {
+			sb.WriteString(location)
+			sb.WriteString(": ")
+		}
+		sb.WriteString(strings.TrimSpace(comment.Body))
+	}
+	return sb.String()
+}
+
+func commonReviewCommentLogin(comments []github.PullRequestReviewComment) string {
+	if len(comments) == 0 {
+		return ""
+	}
+	login := strings.TrimSpace(comments[0].User.Login)
+	if login == "" {
+		return ""
+	}
+	for _, comment := range comments[1:] {
+		if strings.TrimSpace(comment.User.Login) != login {
+			return ""
+		}
+	}
+	return login
 }
 
 func reviewCommentLocation(comment github.PullRequestReviewComment) string {
