@@ -338,6 +338,105 @@ func TestGetPR(t *testing.T) {
 	}
 }
 
+func TestGetRequestedReviewers(t *testing.T) {
+	var gotPath string
+	mux := http.NewServeMux()
+	mux.HandleFunc("/", func(w http.ResponseWriter, r *http.Request) {
+		gotPath = r.URL.Path
+		w.Header().Set("Content-Type", "application/json")
+		fmt.Fprint(w, `{"users":[{"login":"Copilot"},{"login":"reviewer"}],"teams":[{"slug":"platform"}]}`)
+	})
+	withTestServer(t, mux)
+
+	requested, err := GetRequestedReviewers("owner", "repo", 42, "token")
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if gotPath != "/repos/owner/repo/pulls/42/requested_reviewers" {
+		t.Errorf("request path = %q, want %q", gotPath, "/repos/owner/repo/pulls/42/requested_reviewers")
+	}
+	if len(requested.Users) != 2 {
+		t.Fatalf("users = %d, want 2", len(requested.Users))
+	}
+	if requested.Users[0].Login != "Copilot" {
+		t.Errorf("users[0].Login = %q, want Copilot", requested.Users[0].Login)
+	}
+	if len(requested.Teams) != 1 || requested.Teams[0].Slug != "platform" {
+		t.Fatalf("teams = %+v, want platform", requested.Teams)
+	}
+}
+
+func TestIsCopilotRequestedReviewerLogin(t *testing.T) {
+	tests := []struct {
+		login string
+		want  bool
+	}{
+		{login: "Copilot", want: true},
+		{login: " copilot ", want: true},
+		{login: "copilot-pull-request-reviewer[bot]", want: false},
+		{login: "reviewer", want: false},
+		{login: "", want: false},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.login, func(t *testing.T) {
+			if got := isCopilotRequestedReviewerLogin(tt.login); got != tt.want {
+				t.Fatalf("isCopilotRequestedReviewerLogin(%q) = %v, want %v", tt.login, got, tt.want)
+			}
+		})
+	}
+}
+
+func TestWaitForRequestedCopilotReview_CompletesWhenRequestClears(t *testing.T) {
+	callCount := 0
+	mux := http.NewServeMux()
+	mux.HandleFunc("/", func(w http.ResponseWriter, r *http.Request) {
+		if want := "/repos/owner/repo/pulls/42/requested_reviewers"; r.URL.Path != want {
+			t.Errorf("request path = %q, want %q", r.URL.Path, want)
+		}
+		w.Header().Set("Content-Type", "application/json")
+		callCount++
+		if callCount == 1 {
+			fmt.Fprint(w, `{"users":[{"login":"Copilot"}],"teams":[]}`)
+			return
+		}
+		fmt.Fprint(w, `{"users":[{"login":"reviewer"}],"teams":[]}`)
+	})
+	withTestServer(t, mux)
+
+	var logs strings.Builder
+	err := waitForRequestedCopilotReview("owner", "repo", 42, "token", &logs, time.Millisecond, time.Second)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if callCount != 2 {
+		t.Fatalf("call count = %d, want 2", callCount)
+	}
+	if !strings.Contains(logs.String(), "waiting for Copilot requested review") {
+		t.Fatalf("logs missing waiting message:\n%s", logs.String())
+	}
+	if !strings.Contains(logs.String(), "Copilot requested review completed") {
+		t.Fatalf("logs missing completed message:\n%s", logs.String())
+	}
+}
+
+func TestWaitForRequestedCopilotReview_Timeout(t *testing.T) {
+	mux := http.NewServeMux()
+	mux.HandleFunc("/", func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		fmt.Fprint(w, `{"users":[{"login":"Copilot"}],"teams":[]}`)
+	})
+	withTestServer(t, mux)
+
+	err := waitForRequestedCopilotReview("owner", "repo", 42, "token", nil, time.Millisecond, 5*time.Millisecond)
+	if err == nil {
+		t.Fatal("expected timeout error")
+	}
+	if !strings.Contains(err.Error(), "waiting for Copilot requested review") {
+		t.Fatalf("error = %q, want Copilot requested review timeout", err.Error())
+	}
+}
+
 func TestGetPRComments_SinglePage(t *testing.T) {
 	callCount := 0
 	mux := http.NewServeMux()
