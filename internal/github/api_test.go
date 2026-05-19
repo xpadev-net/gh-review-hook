@@ -418,7 +418,7 @@ func TestGetReviewComments_DecodesReviewThreadFields(t *testing.T) {
 		w.Header().Set("Content-Type", "application/json")
 		callCount++
 		if callCount == 1 {
-			fmt.Fprint(w, `[{"id":101,"pull_request_review_id":202,"body":"thread comment","path":"src/example.go","commit_id":"abc123","user":{"login":"reviewer"},"created_at":"2026-05-19T04:20:10Z","updated_at":"2026-05-19T04:20:11Z","start_line":10,"line":12,"original_line":11,"in_reply_to_id":303}]`)
+			fmt.Fprint(w, `[{"id":101,"pull_request_review_id":202,"body":"thread comment","path":"src/example.go","commit_id":"abc123","user":{"login":"reviewer"},"created_at":"2026-05-19T04:20:10Z","updated_at":"2026-05-19T04:20:11Z","start_line":10,"line":12,"original_start_line":9,"original_line":11,"in_reply_to_id":303}]`)
 			return
 		}
 		fmt.Fprint(w, `[]`)
@@ -447,6 +447,9 @@ func TestGetReviewComments_DecodesReviewThreadFields(t *testing.T) {
 	}
 	if got.StartLine == nil || *got.StartLine != 10 {
 		t.Errorf("StartLine = %v, want 10", got.StartLine)
+	}
+	if got.OriginalStartLine == nil || *got.OriginalStartLine != 9 {
+		t.Errorf("OriginalStartLine = %v, want 9", got.OriginalStartLine)
 	}
 	if got.InReplyToID == nil || *got.InReplyToID != 303 {
 		t.Errorf("InReplyToID = %v, want 303", got.InReplyToID)

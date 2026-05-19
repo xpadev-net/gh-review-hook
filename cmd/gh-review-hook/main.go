@@ -323,11 +323,6 @@ func run() int {
 }
 
 func actionableReviewCommentsByReviewID(comments []github.PullRequestReviewComment, headCommitTime time.Time, skipIDs map[int64]bool) map[int64][]github.PullRequestReviewComment {
-	parentReviewIDs := make(map[int64]int64)
-	for _, comment := range comments {
-		parentReviewIDs[comment.ID] = comment.PullRequestReviewID
-	}
-
 	byReviewID := make(map[int64][]github.PullRequestReviewComment)
 	for _, comment := range comments {
 		if !comment.CreatedAt.After(headCommitTime) {
@@ -339,13 +334,9 @@ func actionableReviewCommentsByReviewID(comments []github.PullRequestReviewComme
 		if strings.TrimSpace(comment.Body) == "" {
 			continue
 		}
-		reviewID := comment.PullRequestReviewID
-		if comment.InReplyToID != nil {
-			if parentReviewID, ok := parentReviewIDs[*comment.InReplyToID]; ok {
-				reviewID = parentReviewID
-			}
-		}
-		byReviewID[reviewID] = append(byReviewID[reviewID], comment)
+		// Keep replies under their own review. A reply to an old thread may be a
+		// fresh review on the current HEAD, while the parent review is filtered out.
+		byReviewID[comment.PullRequestReviewID] = append(byReviewID[comment.PullRequestReviewID], comment)
 	}
 	return byReviewID
 }
@@ -393,6 +384,9 @@ func reviewCommentLocation(comment github.PullRequestReviewComment) string {
 	}
 	if comment.StartLine != nil && *comment.StartLine != line {
 		return fmt.Sprintf("%s:%d-%d", comment.Path, *comment.StartLine, line)
+	}
+	if comment.OriginalStartLine != nil && *comment.OriginalStartLine != line {
+		return fmt.Sprintf("%s:%d-%d", comment.Path, *comment.OriginalStartLine, line)
 	}
 	return fmt.Sprintf("%s:%d", comment.Path, line)
 }

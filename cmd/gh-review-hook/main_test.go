@@ -97,7 +97,7 @@ func TestParsePRURL(t *testing.T) {
 	}
 }
 
-func TestActionableReviewCommentsByReviewID_GroupsCurrentCommentsByReview(t *testing.T) {
+func TestActionableReviewCommentsByReviewID_KeepsCurrentRepliesWithTheirOwnReview(t *testing.T) {
 	headTime := time.Date(2026, 5, 19, 10, 0, 0, 0, time.UTC)
 	comments := []github.PullRequestReviewComment{
 		newReviewComment(1, 100, "first current comment", headTime.Add(time.Minute)),
@@ -111,14 +111,17 @@ func TestActionableReviewCommentsByReviewID_GroupsCurrentCommentsByReview(t *tes
 
 	got := actionableReviewCommentsByReviewID(comments, headTime, map[int64]bool{5: true})
 
-	if len(got[100]) != 3 {
-		t.Fatalf("review 100 comments = %d, want 3", len(got[100]))
+	if len(got[100]) != 2 {
+		t.Fatalf("review 100 comments = %d, want 2", len(got[100]))
 	}
-	if got[100][0].ID != 1 || got[100][1].ID != 2 || got[100][2].ID != 7 {
-		t.Fatalf("review 100 comment IDs = [%d %d %d], want [1 2 7]", got[100][0].ID, got[100][1].ID, got[100][2].ID)
+	if got[100][0].ID != 1 || got[100][1].ID != 2 {
+		t.Fatalf("review 100 comment IDs = [%d %d], want [1 2]", got[100][0].ID, got[100][1].ID)
 	}
 	if len(got[200]) != 1 || got[200][0].ID != 3 {
 		t.Fatalf("review 200 comments = %+v, want only ID 3", got[200])
+	}
+	if len(got[300]) != 1 || got[300][0].ID != 7 {
+		t.Fatalf("review 300 comments = %+v, want only reply ID 7", got[300])
 	}
 }
 
@@ -156,6 +159,19 @@ func TestFormatPullRequestReview_UsesCommentsWhenReviewBodyIsEmpty(t *testing.T)
 	}
 	if !strings.Contains(got, "src/example.go:20: inline feedback") {
 		t.Fatalf("formatted review missing inline comment:\n%s", got)
+	}
+}
+
+func TestReviewCommentLocation_UsesOriginalRangeForOutdatedComment(t *testing.T) {
+	comment := newReviewComment(1, 100, "inline feedback", time.Now())
+	comment.Path = "src/example.go"
+	comment.OriginalStartLine = intPtr(18)
+	comment.OriginalLine = intPtr(20)
+
+	got := reviewCommentLocation(comment)
+
+	if got != "src/example.go:18-20" {
+		t.Fatalf("location = %q, want src/example.go:18-20", got)
 	}
 }
 

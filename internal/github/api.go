@@ -126,6 +126,7 @@ type PullRequestReviewComment struct {
 	Line                *int      `json:"line"`
 	OriginalLine        *int      `json:"original_line"`
 	StartLine           *int      `json:"start_line"`
+	OriginalStartLine   *int      `json:"original_start_line"`
 	InReplyToID         *int64    `json:"in_reply_to_id"`
 	User                struct {
 		Login string `json:"login"`
