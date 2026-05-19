@@ -77,6 +77,12 @@ func run() int {
 		return 1
 	}
 
+	// Step 4.5: Wait for Copilot requested review to complete
+	if err := github.WaitForRequestedCopilotReview(owner, repo, pr.Number, token, os.Stderr); err != nil {
+		fmt.Fprintln(os.Stderr, err.Error())
+		return 1
+	}
+
 	// Detect presence of a Greptile check/context using CI result's seen contexts.
 	// Only skip Greptile if we observed CI checks but none contain "greptile".
 	hasGreptile := false

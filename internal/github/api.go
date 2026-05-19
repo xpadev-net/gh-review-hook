@@ -9,6 +9,7 @@ import (
 	"net/http"
 	"net/url"
 	"strconv"
+	"strings"
 	"time"
 )
 
@@ -145,6 +146,22 @@ type PullRequestReview struct {
 	} `json:"user"`
 }
 
+// RequestedReviewersResponse represents pending PR review requests.
+type RequestedReviewersResponse struct {
+	Users []RequestedReviewer `json:"users"`
+	Teams []RequestedTeam     `json:"teams"`
+}
+
+// RequestedReviewer represents a user whose PR review is requested.
+type RequestedReviewer struct {
+	Login string `json:"login"`
+}
+
+// RequestedTeam represents a team whose PR review is requested.
+type RequestedTeam struct {
+	Slug string `json:"slug"`
+}
+
 // Commit represents the subset of commit data needed for timing checks.
 type Commit struct {
 	Commit struct {
@@ -233,6 +250,16 @@ func GetPullRequestReviews(owner, repo string, number int, token string) ([]Pull
 		page++
 	}
 	return all, nil
+}
+
+// GetRequestedReviewers fetches users and teams whose review is still requested.
+func GetRequestedReviewers(owner, repo string, number int, token string) (*RequestedReviewersResponse, error) {
+	url := fmt.Sprintf("%s/repos/%s/%s/pulls/%d/requested_reviewers", apiBase, owner, repo, number)
+	var requested RequestedReviewersResponse
+	if err := apiGet(url, token, &requested); err != nil {
+		return nil, err
+	}
+	return &requested, nil
 }
 
 func getComments[T any](baseURL, token string) ([]T, error) {
@@ -460,6 +487,59 @@ func WaitForChecks(owner, repo, sha, token string, logw io.Writer) (*CIResult, e
 
 		return result, nil
 	}
+}
+
+// WaitForRequestedCopilotReview waits until Copilot is no longer a requested reviewer.
+func WaitForRequestedCopilotReview(owner, repo string, number int, token string, logw io.Writer) error {
+	return waitForRequestedCopilotReview(owner, repo, number, token, logw, pollInterval, pollTimeout)
+}
+
+func waitForRequestedCopilotReview(owner, repo string, number int, token string, logw io.Writer, interval, timeout time.Duration) error {
+	logf := func(format string, a ...any) {
+		if logw != nil {
+			fmt.Fprintf(logw, format, a...)
+		}
+	}
+
+	start := time.Now()
+	waitingLogged := false
+	for {
+		if time.Since(start) > timeout {
+			return fmt.Errorf("timed out after %s waiting for Copilot requested review to complete", timeout)
+		}
+
+		requested, err := GetRequestedReviewers(owner, repo, number, token)
+		if err != nil {
+			return fmt.Errorf("failed to fetch requested reviewers: %w", err)
+		}
+		if !hasCopilotRequestedReviewer(requested) {
+			if waitingLogged {
+				logf("[Review] Copilot requested review completed\n")
+			}
+			return nil
+		}
+		if !waitingLogged {
+			logf("[Review] waiting for Copilot requested review (timeout %s)\n", timeout)
+			waitingLogged = true
+		}
+		time.Sleep(interval)
+	}
+}
+
+func hasCopilotRequestedReviewer(requested *RequestedReviewersResponse) bool {
+	if requested == nil {
+		return false
+	}
+	for _, user := range requested.Users {
+		if isCopilotRequestedReviewerLogin(user.Login) {
+			return true
+		}
+	}
+	return false
+}
+
+func isCopilotRequestedReviewerLogin(login string) bool {
+	return strings.EqualFold(strings.TrimSpace(login), "Copilot")
 }
 
 // checkRunStatusString returns a human-readable status string for a CheckRun.
