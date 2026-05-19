@@ -408,6 +408,54 @@ func TestGetPRComments_Pagination(t *testing.T) {
 	}
 }
 
+func TestGetReviewComments_DecodesReviewThreadFields(t *testing.T) {
+	callCount := 0
+	mux := http.NewServeMux()
+	mux.HandleFunc("/", func(w http.ResponseWriter, r *http.Request) {
+		if want := "/repos/owner/repo/pulls/42/comments"; r.URL.Path != want {
+			t.Errorf("request path = %q, want %q", r.URL.Path, want)
+		}
+		w.Header().Set("Content-Type", "application/json")
+		callCount++
+		if callCount == 1 {
+			fmt.Fprint(w, `[{"id":101,"pull_request_review_id":202,"body":"thread comment","path":"src/example.go","commit_id":"abc123","user":{"login":"reviewer"},"created_at":"2026-05-19T04:20:10Z","updated_at":"2026-05-19T04:20:11Z","start_line":10,"line":12,"original_line":11,"in_reply_to_id":303}]`)
+			return
+		}
+		fmt.Fprint(w, `[]`)
+	})
+	withTestServer(t, mux)
+
+	comments, err := GetReviewComments("owner", "repo", 42, "token")
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if len(comments) != 1 {
+		t.Fatalf("got %d comments, want 1", len(comments))
+	}
+	got := comments[0]
+	if got.ID != 101 {
+		t.Errorf("ID = %d, want 101", got.ID)
+	}
+	if got.PullRequestReviewID != 202 {
+		t.Errorf("PullRequestReviewID = %d, want 202", got.PullRequestReviewID)
+	}
+	if got.Path != "src/example.go" {
+		t.Errorf("Path = %q, want src/example.go", got.Path)
+	}
+	if got.Line == nil || *got.Line != 12 {
+		t.Errorf("Line = %v, want 12", got.Line)
+	}
+	if got.StartLine == nil || *got.StartLine != 10 {
+		t.Errorf("StartLine = %v, want 10", got.StartLine)
+	}
+	if got.InReplyToID == nil || *got.InReplyToID != 303 {
+		t.Errorf("InReplyToID = %v, want 303", got.InReplyToID)
+	}
+	if got.User.Login != "reviewer" {
+		t.Errorf("User.Login = %q, want reviewer", got.User.Login)
+	}
+}
+
 func TestCreatePRComment(t *testing.T) {
 	var (
 		gotPath    string

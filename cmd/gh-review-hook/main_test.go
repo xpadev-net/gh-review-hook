@@ -1,6 +1,12 @@
 package main
 
-import "testing"
+import (
+	"strings"
+	"testing"
+	"time"
+
+	"github.com/xpadev-net/gh-review-hook/internal/github"
+)
 
 func TestParsePRURL(t *testing.T) {
 	tests := []struct {
@@ -89,4 +95,97 @@ func TestParsePRURL(t *testing.T) {
 			}
 		})
 	}
+}
+
+func TestActionableReviewCommentsByReviewID_GroupsCurrentCommentsByReview(t *testing.T) {
+	headTime := time.Date(2026, 5, 19, 10, 0, 0, 0, time.UTC)
+	comments := []github.PullRequestReviewComment{
+		newReviewComment(1, 100, "first current comment", headTime.Add(time.Minute)),
+		newReviewComment(2, 100, "second current comment", headTime.Add(2*time.Minute)),
+		newReviewComment(3, 200, "other review comment", headTime.Add(3*time.Minute)),
+		newReviewComment(4, 100, "old comment", headTime.Add(-time.Minute)),
+		newReviewComment(5, 100, "skipped comment", headTime.Add(4*time.Minute)),
+		newReviewComment(6, 100, "   ", headTime.Add(5*time.Minute)),
+		newReviewReply(7, 300, 1, "reply comment", headTime.Add(6*time.Minute)),
+	}
+
+	got := actionableReviewCommentsByReviewID(comments, headTime, map[int64]bool{5: true})
+
+	if len(got[100]) != 3 {
+		t.Fatalf("review 100 comments = %d, want 3", len(got[100]))
+	}
+	if got[100][0].ID != 1 || got[100][1].ID != 2 || got[100][2].ID != 7 {
+		t.Fatalf("review 100 comment IDs = [%d %d %d], want [1 2 7]", got[100][0].ID, got[100][1].ID, got[100][2].ID)
+	}
+	if len(got[200]) != 1 || got[200][0].ID != 3 {
+		t.Fatalf("review 200 comments = %+v, want only ID 3", got[200])
+	}
+}
+
+func TestFormatPullRequestReview_IncludesInlineComments(t *testing.T) {
+	review := newPullRequestReview(100, "reviewer-bot", "COMMENTED", "summary body")
+	comment := newReviewComment(1, 100, "inline feedback", time.Now())
+	comment.Path = "src/example.go"
+	comment.StartLine = intPtr(10)
+	comment.Line = intPtr(12)
+
+	got := formatPullRequestReview(review, []github.PullRequestReviewComment{comment})
+
+	for _, want := range []string{
+		"Review from reviewer-bot (COMMENTED):",
+		"summary body",
+		"Review comments:",
+		"src/example.go:10-12: inline feedback",
+	} {
+		if !strings.Contains(got, want) {
+			t.Fatalf("formatted review missing %q:\n%s", want, got)
+		}
+	}
+}
+
+func TestFormatPullRequestReview_UsesCommentsWhenReviewBodyIsEmpty(t *testing.T) {
+	review := newPullRequestReview(100, "reviewer-bot", "COMMENTED", "")
+	comment := newReviewComment(1, 100, "inline feedback", time.Now())
+	comment.Path = "src/example.go"
+	comment.OriginalLine = intPtr(20)
+
+	got := formatPullRequestReview(review, []github.PullRequestReviewComment{comment})
+
+	if !strings.Contains(got, "Review from reviewer-bot (COMMENTED):") {
+		t.Fatalf("formatted review missing header:\n%s", got)
+	}
+	if !strings.Contains(got, "src/example.go:20: inline feedback") {
+		t.Fatalf("formatted review missing inline comment:\n%s", got)
+	}
+}
+
+func newPullRequestReview(id int64, login, state, body string) github.PullRequestReview {
+	submittedAt := time.Now()
+	var review github.PullRequestReview
+	review.ID = id
+	review.User.Login = login
+	review.State = state
+	review.Body = body
+	review.SubmittedAt = &submittedAt
+	return review
+}
+
+func newReviewComment(id, reviewID int64, body string, createdAt time.Time) github.PullRequestReviewComment {
+	var comment github.PullRequestReviewComment
+	comment.ID = id
+	comment.PullRequestReviewID = reviewID
+	comment.Body = body
+	comment.CreatedAt = createdAt
+	comment.User.Login = "commenter"
+	return comment
+}
+
+func newReviewReply(id, reviewID, parentID int64, body string, createdAt time.Time) github.PullRequestReviewComment {
+	comment := newReviewComment(id, reviewID, body, createdAt)
+	comment.InReplyToID = &parentID
+	return comment
+}
+
+func intPtr(v int) *int {
+	return &v
 }
