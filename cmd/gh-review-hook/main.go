@@ -187,7 +187,6 @@ func run() int {
 	}
 	var codeRabbitPrompts []string
 	seenPrompts := make(map[string]bool)
-	codeRabbitReviewCommentIDs := make(map[int64]bool)
 
 	for _, comment := range issueComments {
 		commentTime := comment.CreatedAt
@@ -225,7 +224,6 @@ func run() int {
 		if p == "" {
 			continue
 		}
-		codeRabbitReviewCommentIDs[comment.ID] = true
 		if seenPrompts[p] {
 			continue
 		}
@@ -276,20 +274,10 @@ func run() int {
 		fmt.Fprintf(os.Stderr, "failed to fetch PR reviews: %v\n", err)
 		return 1
 	}
-	reviewCommentsByReviewID := actionableReviewCommentsByReviewID(reviewComments, headCommitTime, codeRabbitReviewCommentIDs)
+	reviewCommentsByReviewID := actionableReviewCommentsByReviewID(reviewComments, headCommitTime)
 	for _, review := range reviews {
-		// Skip PENDING reviews (not submitted yet)
-		if review.State == "PENDING" || review.SubmittedAt == nil {
-			continue
-		}
-		// Skip reviews not targeting the current HEAD commit
-		if review.CommitID != latestPR.Head.SHA {
-			continue
-		}
 		comments := reviewCommentsByReviewID[review.ID]
-		// Only surface actionable feedback: CHANGES_REQUESTED (always) and COMMENTED
-		// with a top-level body or inline comments. APPROVED/DISMISSED are not blocking.
-		if review.State != "CHANGES_REQUESTED" && !(review.State == "COMMENTED" && (review.Body != "" || len(comments) > 0)) {
+		if !isActionablePullRequestReview(review, comments, latestPR.Head.SHA) {
 			continue
 		}
 		feedbackParts = append(feedbackParts, formatPullRequestReview(review, comments))
@@ -322,16 +310,28 @@ func run() int {
 	return 0
 }
 
-func actionableReviewCommentsByReviewID(comments []github.PullRequestReviewComment, headCommitTime time.Time, skipIDs map[int64]bool) map[int64][]github.PullRequestReviewComment {
+func isActionablePullRequestReview(review github.PullRequestReview, comments []github.PullRequestReviewComment, headSHA string) bool {
+	if review.State == "PENDING" || review.SubmittedAt == nil {
+		return false
+	}
+	if review.CommitID != headSHA {
+		return false
+	}
+	if isHandledReviewBot(review.User.Login) {
+		return false
+	}
+	// Only surface actionable feedback: CHANGES_REQUESTED (always) and COMMENTED
+	// with a top-level body or inline comments. APPROVED/DISMISSED are not blocking.
+	return review.State == "CHANGES_REQUESTED" || (review.State == "COMMENTED" && (review.Body != "" || len(comments) > 0))
+}
+
+func actionableReviewCommentsByReviewID(comments []github.PullRequestReviewComment, headCommitTime time.Time) map[int64][]github.PullRequestReviewComment {
 	byReviewID := make(map[int64][]github.PullRequestReviewComment)
 	for _, comment := range comments {
 		if !comment.CreatedAt.After(headCommitTime) {
 			continue
 		}
-		if skipIDs[comment.ID] {
-			continue
-		}
-		if strings.ToLower(strings.TrimSpace(comment.User.Login)) == "greptile-apps[bot]" {
+		if isHandledReviewBot(comment.User.Login) {
 			continue
 		}
 		if strings.TrimSpace(comment.Body) == "" {
@@ -342,6 +342,11 @@ func actionableReviewCommentsByReviewID(comments []github.PullRequestReviewComme
 		byReviewID[comment.PullRequestReviewID] = append(byReviewID[comment.PullRequestReviewID], comment)
 	}
 	return byReviewID
+}
+
+func isHandledReviewBot(login string) bool {
+	loginLower := strings.ToLower(strings.TrimSpace(login))
+	return loginLower == "coderabbitai[bot]" || loginLower == "greptile-apps[bot]"
 }
 
 func formatPullRequestReview(review github.PullRequestReview, comments []github.PullRequestReviewComment) string {

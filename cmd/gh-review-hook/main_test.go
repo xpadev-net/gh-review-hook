@@ -104,13 +104,13 @@ func TestActionableReviewCommentsByReviewID_KeepsCurrentRepliesWithTheirOwnRevie
 		newReviewComment(2, 100, "second current comment", headTime.Add(2*time.Minute)),
 		newReviewComment(3, 200, "other review comment", headTime.Add(3*time.Minute)),
 		newReviewComment(4, 100, "old comment", headTime.Add(-time.Minute)),
-		newReviewComment(5, 100, "skipped comment", headTime.Add(4*time.Minute)),
 		newReviewComment(6, 100, "   ", headTime.Add(5*time.Minute)),
 		newReviewReply(7, 300, 1, "reply comment", headTime.Add(6*time.Minute)),
 		newReviewCommentFrom(8, 100, "bot comment", "greptile-apps[bot]", headTime.Add(7*time.Minute)),
+		newReviewCommentFrom(9, 100, "bot comment", "coderabbitai[bot]", headTime.Add(8*time.Minute)),
 	}
 
-	got := actionableReviewCommentsByReviewID(comments, headTime, map[int64]bool{5: true})
+	got := actionableReviewCommentsByReviewID(comments, headTime)
 
 	if len(got[100]) != 2 {
 		t.Fatalf("review 100 comments = %d, want 2", len(got[100]))
@@ -160,6 +160,51 @@ func TestFormatPullRequestReview_UsesCommentsWhenReviewBodyIsEmpty(t *testing.T)
 	}
 	if !strings.Contains(got, "src/example.go:20: inline feedback") {
 		t.Fatalf("formatted review missing inline comment:\n%s", got)
+	}
+}
+
+func TestIsActionablePullRequestReview_SkipsHandledBotReviews(t *testing.T) {
+	const headSHA = "head-sha"
+	tests := []struct {
+		name  string
+		login string
+		state string
+		body  string
+	}{
+		{
+			name:  "CodeRabbit commented review",
+			login: "coderabbitai[bot]",
+			state: "COMMENTED",
+			body:  "review body",
+		},
+		{
+			name:  "Greptile changes requested review",
+			login: "greptile-apps[bot]",
+			state: "CHANGES_REQUESTED",
+			body:  "review body",
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			review := newPullRequestReview(100, tt.login, tt.state, tt.body)
+			review.CommitID = headSHA
+
+			if isActionablePullRequestReview(review, nil, headSHA) {
+				t.Fatal("handled bot review should not be actionable")
+			}
+		})
+	}
+}
+
+func TestIsActionablePullRequestReview_AllowsHumanReviewWithComments(t *testing.T) {
+	const headSHA = "head-sha"
+	review := newPullRequestReview(100, "reviewer", "COMMENTED", "")
+	review.CommitID = headSHA
+	comment := newReviewComment(1, 100, "inline feedback", time.Now())
+
+	if !isActionablePullRequestReview(review, []github.PullRequestReviewComment{comment}, headSHA) {
+		t.Fatal("human review with inline comments should be actionable")
 	}
 }
 
