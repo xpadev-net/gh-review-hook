@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"net/url"
 	"os"
+	"sort"
 	"strconv"
 	"strings"
 	"time"
@@ -200,7 +201,10 @@ func run() int {
 			continue
 		}
 		p := parser.ExtractCodeRabbitPrompt(comment.Body)
-		if p == "" || seenPrompts[p] {
+		if p == "" {
+			continue
+		}
+		if seenPrompts[p] {
 			continue
 		}
 		seenPrompts[p] = true
@@ -218,7 +222,10 @@ func run() int {
 			continue
 		}
 		p := parser.ExtractCodeRabbitPrompt(comment.Body)
-		if p == "" || seenPrompts[p] {
+		if p == "" {
+			continue
+		}
+		if seenPrompts[p] {
 			continue
 		}
 		seenPrompts[p] = true
@@ -268,37 +275,8 @@ func run() int {
 		fmt.Fprintf(os.Stderr, "failed to fetch PR reviews: %v\n", err)
 		return 1
 	}
-	for _, review := range reviews {
-		// Skip PENDING reviews (not submitted yet)
-		if review.State == "PENDING" || review.SubmittedAt == nil {
-			continue
-		}
-		// Skip reviews not targeting the current HEAD commit
-		if review.CommitID != latestPR.Head.SHA {
-			continue
-		}
-		// Only surface actionable feedback: CHANGES_REQUESTED (always) and COMMENTED
-		// with a top-level body. APPROVED/DISMISSED are not blocking; COMMENTED
-		// without a body consists only of inline diff comments already captured
-		// via GetReviewComments above.
-		if review.State != "CHANGES_REQUESTED" && !(review.State == "COMMENTED" && review.Body != "") {
-			continue
-		}
-		// Format review: "Review from {username} ({state}):\n{body}" or "Review from {username}: {state}" if body is empty
-		var sb strings.Builder
-		sb.WriteString("Review from ")
-		sb.WriteString(review.User.Login)
-		if review.Body != "" {
-			sb.WriteString(" (")
-			sb.WriteString(review.State)
-			sb.WriteString("):\n")
-			sb.WriteString(review.Body)
-		} else {
-			sb.WriteString(": ")
-			sb.WriteString(review.State)
-		}
-		feedbackParts = append(feedbackParts, sb.String())
-	}
+	reviewCommentsByReviewID := actionableReviewCommentsByReviewID(reviewComments, headCommitTime)
+	feedbackParts = append(feedbackParts, pullRequestReviewFeedback(reviews, reviewCommentsByReviewID, latestPR.Head.SHA)...)
 
 	// Step 12: Check for merge conflicts with target branch
 	if latestPR.Head.Ref != "" && latestPR.Base.Ref != "" {
@@ -324,6 +302,206 @@ func run() int {
 		return 2
 	}
 
+	return 0
+}
+
+func pullRequestReviewFeedback(reviews []github.PullRequestReview, reviewCommentsByReviewID map[int64][]github.PullRequestReviewComment, headSHA string) []string {
+	var feedback []string
+	reviewsByID := make(map[int64]github.PullRequestReview)
+	for _, review := range reviews {
+		reviewsByID[review.ID] = review
+	}
+	consumedReviewIDs := make(map[int64]bool)
+	for _, review := range reviews {
+		comments := reviewCommentsByReviewID[review.ID]
+		if !isActionablePullRequestReview(review, comments, headSHA) {
+			continue
+		}
+		feedback = append(feedback, formatPullRequestReview(review, comments))
+		consumedReviewIDs[review.ID] = true
+	}
+	var reviewIDs []int64
+	for reviewID, comments := range reviewCommentsByReviewID {
+		if consumedReviewIDs[reviewID] {
+			continue
+		}
+		if !shouldSurfaceStandaloneReviewComments(reviewsByID[reviewID], comments, headSHA) {
+			continue
+		}
+		reviewIDs = append(reviewIDs, reviewID)
+	}
+	sort.Slice(reviewIDs, func(i, j int) bool {
+		leftTime := earliestReviewCommentTime(reviewCommentsByReviewID[reviewIDs[i]])
+		rightTime := earliestReviewCommentTime(reviewCommentsByReviewID[reviewIDs[j]])
+		if leftTime.Equal(rightTime) {
+			return reviewIDs[i] < reviewIDs[j]
+		}
+		return leftTime.Before(rightTime)
+	})
+	for _, reviewID := range reviewIDs {
+		feedback = append(feedback, formatPullRequestReviewComments(reviewCommentsByReviewID[reviewID]))
+	}
+	return feedback
+}
+
+func shouldSurfaceStandaloneReviewComments(review github.PullRequestReview, comments []github.PullRequestReviewComment, headSHA string) bool {
+	if len(comments) == 0 {
+		return false
+	}
+	if review.ID == 0 {
+		return true
+	}
+	if review.State == "DISMISSED" || isHandledReviewBot(review.User.Login) {
+		return false
+	}
+	return review.CommitID != headSHA
+}
+
+func earliestReviewCommentTime(comments []github.PullRequestReviewComment) time.Time {
+	if len(comments) == 0 {
+		return time.Time{}
+	}
+	earliest := comments[0].CreatedAt
+	for _, comment := range comments[1:] {
+		if comment.CreatedAt.Before(earliest) {
+			earliest = comment.CreatedAt
+		}
+	}
+	return earliest
+}
+
+func isActionablePullRequestReview(review github.PullRequestReview, comments []github.PullRequestReviewComment, headSHA string) bool {
+	if review.State == "PENDING" || review.SubmittedAt == nil {
+		return false
+	}
+	if review.CommitID != headSHA {
+		return false
+	}
+	if isHandledReviewBot(review.User.Login) {
+		return false
+	}
+	// Only surface actionable feedback: CHANGES_REQUESTED (always) and COMMENTED
+	// with a top-level body or inline comments. APPROVED/DISMISSED are not blocking.
+	return review.State == "CHANGES_REQUESTED" || (review.State == "COMMENTED" && (review.Body != "" || len(comments) > 0))
+}
+
+func actionableReviewCommentsByReviewID(comments []github.PullRequestReviewComment, headCommitTime time.Time) map[int64][]github.PullRequestReviewComment {
+	byReviewID := make(map[int64][]github.PullRequestReviewComment)
+	for _, comment := range comments {
+		if !comment.CreatedAt.After(headCommitTime) {
+			continue
+		}
+		if isHandledReviewBot(comment.User.Login) {
+			continue
+		}
+		if strings.TrimSpace(comment.Body) == "" {
+			continue
+		}
+		// Keep replies under their own review. A reply to an old thread may be a
+		// fresh review on the current HEAD, while the parent review is filtered out.
+		byReviewID[comment.PullRequestReviewID] = append(byReviewID[comment.PullRequestReviewID], comment)
+	}
+	return byReviewID
+}
+
+func isHandledReviewBot(login string) bool {
+	loginLower := strings.ToLower(strings.TrimSpace(login))
+	return loginLower == "coderabbitai[bot]" || loginLower == "greptile-apps[bot]"
+}
+
+func formatPullRequestReview(review github.PullRequestReview, comments []github.PullRequestReviewComment) string {
+	var sb strings.Builder
+	sb.WriteString("Review from ")
+	sb.WriteString(review.User.Login)
+	sb.WriteString(" (")
+	sb.WriteString(review.State)
+	sb.WriteString("):")
+
+	body := strings.TrimSpace(review.Body)
+	if body != "" {
+		sb.WriteString("\n")
+		sb.WriteString(body)
+	}
+	if len(comments) > 0 {
+		if body != "" {
+			sb.WriteString("\n\n")
+		} else {
+			sb.WriteString("\n")
+		}
+		sb.WriteString("Review comments:")
+		for _, comment := range comments {
+			sb.WriteString("\n- ")
+			location := reviewCommentLocation(comment)
+			if location != "" {
+				sb.WriteString(location)
+				sb.WriteString(": ")
+			}
+			sb.WriteString(strings.TrimSpace(comment.Body))
+		}
+	}
+	return sb.String()
+}
+
+func formatPullRequestReviewComments(comments []github.PullRequestReviewComment) string {
+	var sb strings.Builder
+	sb.WriteString("Review comments")
+	if login := commonReviewCommentLogin(comments); login != "" {
+		sb.WriteString(" from ")
+		sb.WriteString(login)
+	}
+	sb.WriteString(":")
+	for _, comment := range comments {
+		sb.WriteString("\n- ")
+		location := reviewCommentLocation(comment)
+		if location != "" {
+			sb.WriteString(location)
+			sb.WriteString(": ")
+		}
+		sb.WriteString(strings.TrimSpace(comment.Body))
+	}
+	return sb.String()
+}
+
+func commonReviewCommentLogin(comments []github.PullRequestReviewComment) string {
+	if len(comments) == 0 {
+		return ""
+	}
+	login := strings.TrimSpace(comments[0].User.Login)
+	if login == "" {
+		return ""
+	}
+	for _, comment := range comments[1:] {
+		if strings.TrimSpace(comment.User.Login) != login {
+			return ""
+		}
+	}
+	return login
+}
+
+func reviewCommentLocation(comment github.PullRequestReviewComment) string {
+	if comment.Path == "" {
+		return ""
+	}
+	line := reviewCommentLine(comment)
+	if line == 0 {
+		return comment.Path
+	}
+	if comment.StartLine != nil && *comment.StartLine != line {
+		return fmt.Sprintf("%s:%d-%d", comment.Path, *comment.StartLine, line)
+	}
+	if comment.OriginalStartLine != nil && *comment.OriginalStartLine != line {
+		return fmt.Sprintf("%s:%d-%d", comment.Path, *comment.OriginalStartLine, line)
+	}
+	return fmt.Sprintf("%s:%d", comment.Path, line)
+}
+
+func reviewCommentLine(comment github.PullRequestReviewComment) int {
+	if comment.Line != nil {
+		return *comment.Line
+	}
+	if comment.OriginalLine != nil {
+		return *comment.OriginalLine
+	}
 	return 0
 }
 

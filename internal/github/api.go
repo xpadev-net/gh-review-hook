@@ -114,6 +114,25 @@ type IssueComment struct {
 	} `json:"user"`
 }
 
+// PullRequestReviewComment represents an inline PR review comment.
+type PullRequestReviewComment struct {
+	ID                  int64     `json:"id"`
+	PullRequestReviewID int64     `json:"pull_request_review_id"`
+	Body                string    `json:"body"`
+	Path                string    `json:"path"`
+	CommitID            string    `json:"commit_id"`
+	CreatedAt           time.Time `json:"created_at"`
+	UpdatedAt           time.Time `json:"updated_at"`
+	Line                *int      `json:"line"`
+	OriginalLine        *int      `json:"original_line"`
+	StartLine           *int      `json:"start_line"`
+	OriginalStartLine   *int      `json:"original_start_line"`
+	InReplyToID         *int64    `json:"in_reply_to_id"`
+	User                struct {
+		Login string `json:"login"`
+	} `json:"user"`
+}
+
 // PullRequestReview represents a GitHub PR review (APPROVED, CHANGES_REQUESTED, COMMENTED, DISMISSED, PENDING).
 type PullRequestReview struct {
 	ID          int64      `json:"id"`
@@ -193,8 +212,8 @@ func GetPRComments(owner, repo string, number int, token string) ([]IssueComment
 }
 
 // GetReviewComments fetches all PR review comments, handling pagination.
-func GetReviewComments(owner, repo string, number int, token string) ([]IssueComment, error) {
-	return getComments[IssueComment](fmt.Sprintf("%s/repos/%s/%s/pulls/%d/comments?per_page=100&page=", apiBase, owner, repo, number), token)
+func GetReviewComments(owner, repo string, number int, token string) ([]PullRequestReviewComment, error) {
+	return getComments[PullRequestReviewComment](fmt.Sprintf("%s/repos/%s/%s/pulls/%d/comments?per_page=100&page=", apiBase, owner, repo, number), token)
 }
 
 // GetPullRequestReviews fetches all PR reviews (submitted and pending), handling pagination.
