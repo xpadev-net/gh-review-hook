@@ -519,7 +519,7 @@ func waitForRequestedCopilotReview(owner, repo string, number int, token string,
 			return nil
 		}
 		if !waitingLogged {
-			logf("[Review] waiting for Copilot requested review\n")
+			logf("[Review] waiting for Copilot requested review (timeout %s)\n", timeout)
 			waitingLogged = true
 		}
 		time.Sleep(interval)

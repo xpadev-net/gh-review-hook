@@ -412,7 +412,7 @@ func TestWaitForRequestedCopilotReview_CompletesWhenRequestClears(t *testing.T) 
 	if callCount != 2 {
 		t.Fatalf("call count = %d, want 2", callCount)
 	}
-	if !strings.Contains(logs.String(), "waiting for Copilot requested review") {
+	if !strings.Contains(logs.String(), "waiting for Copilot requested review (timeout 1s)") {
 		t.Fatalf("logs missing waiting message:\n%s", logs.String())
 	}
 	if !strings.Contains(logs.String(), "Copilot requested review completed") {
