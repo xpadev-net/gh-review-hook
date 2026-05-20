@@ -7,9 +7,10 @@ Claude Code のセッション終了時に自動実行され、以下をチェ�
 - CI チェックの合否
 - [Greptile](https://www.greptile.com/) による AI コードレビューの結果
 - [CodeRabbit](https://coderabbit.ai/) によるレビューコメント
-- ターゲットブランチとのマージコンフリクト
+- base branch から遅れていないこと
+- base branch とのマージコンフリクト
 
-問題が検出された場合、exit code 2 で終了しフィードバックを出力します。Claude Code はこれをブロックシグナルとして扱います。
+問題が検出された場合、exit code 2 で終了しフィードバックを出力します。Claude Code はこれをブロックシグナルとして扱います。PR が base branch から遅れている場合は、履歴の破壊を避けるため rebase ではなく merge で更新するよう促します。
 
 ## インストール
 

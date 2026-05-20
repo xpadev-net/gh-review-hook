@@ -53,6 +53,69 @@ func TestParseConflictOutput(t *testing.T) {
 	}
 }
 
+func TestParseBehindCount(t *testing.T) {
+	tests := []struct {
+		name    string
+		input   string
+		want    int
+		wantErr bool
+	}{
+		{
+			name:  "zero",
+			input: "0\n",
+			want:  0,
+		},
+		{
+			name:  "one",
+			input: "1\n",
+			want:  1,
+		},
+		{
+			name:  "multiple",
+			input: "12\n",
+			want:  12,
+		},
+		{
+			name:  "whitespace",
+			input: " 3 \n",
+			want:  3,
+		},
+		{
+			name:    "invalid",
+			input:   "abc\n",
+			wantErr: true,
+		},
+		{
+			name:    "negative",
+			input:   "-1\n",
+			wantErr: true,
+		},
+		{
+			name:    "empty",
+			input:   "",
+			wantErr: true,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			got, err := parseBehindCount(tt.input)
+			if tt.wantErr {
+				if err == nil {
+					t.Fatalf("expected error, got %d", got)
+				}
+				return
+			}
+			if err != nil {
+				t.Fatalf("unexpected error: %v", err)
+			}
+			if got != tt.want {
+				t.Errorf("parseBehindCount(%q) = %d, want %d", tt.input, got, tt.want)
+			}
+		})
+	}
+}
+
 func TestParseRemoteURL(t *testing.T) {
 	tests := []struct {
 		name      string

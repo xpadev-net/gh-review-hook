@@ -284,14 +284,24 @@ func run() int {
 	reviewCommentsByReviewID := actionableReviewCommentsByReviewID(reviewComments, headCommitTime)
 	feedbackParts = append(feedbackParts, pullRequestReviewFeedback(reviews, reviewCommentsByReviewID, latestPR.Head.SHA)...)
 
-	// Step 12: Check for merge conflicts with target branch
+	// Step 12: Check whether the PR branch is behind the base branch
+	if latestPR.Head.Ref != "" && latestPR.Base.Ref != "" {
+		behindCount, err := git.BehindBaseCount(latestPR.Head.Ref, latestPR.Base.Ref)
+		if err != nil {
+			fmt.Fprintf(os.Stderr, "warning: base branch behind check failed: %v\n", err)
+		} else if behindCount > 0 {
+			feedbackParts = append(feedbackParts, formatBehindBaseBranchFeedback(latestPR.Base.Ref, behindCount))
+		}
+	}
+
+	// Step 13: Check for merge conflicts with base branch
 	if latestPR.Head.Ref != "" && latestPR.Base.Ref != "" {
 		conflictFiles, err := git.ConflictFiles(latestPR.Head.Ref, latestPR.Base.Ref)
 		if err != nil {
 			fmt.Fprintf(os.Stderr, "warning: merge conflict check failed: %v\n", err)
 		} else if len(conflictFiles) > 0 {
 			var sb strings.Builder
-			sb.WriteString("Merge conflicts detected with target branch '")
+			sb.WriteString("Merge conflicts detected with base branch '")
 			sb.WriteString(latestPR.Base.Ref)
 			sb.WriteString("':\n")
 			for _, f := range conflictFiles {
@@ -309,6 +319,20 @@ func run() int {
 	}
 
 	return 0
+}
+
+func formatBehindBaseBranchFeedback(baseRef string, count int) string {
+	commitWord := "commits"
+	if count == 1 {
+		commitWord = "commit"
+	}
+	return fmt.Sprintf(
+		"PR is %d %s behind base branch '%s'. Please update this branch by merging base branch '%s' instead of rebasing to avoid rewriting history.",
+		count,
+		commitWord,
+		baseRef,
+		baseRef,
+	)
 }
 
 func pullRequestReviewFeedback(reviews []github.PullRequestReview, reviewCommentsByReviewID map[int64][]github.PullRequestReviewComment, headSHA string) []string {

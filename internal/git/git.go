@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"os/exec"
 	"regexp"
+	"strconv"
 	"strings"
 )
 
@@ -117,6 +118,35 @@ func ConflictFiles(headRef, baseBranch string) ([]string, error) {
 	default:
 		return nil, fmt.Errorf("git merge-tree exited with code %d: %s", exitCode, strings.TrimSpace(stdout))
 	}
+}
+
+// BehindBaseCount returns how many commits origin/<baseBranch> has that
+// origin/<headRef> does not. The working tree and index are never touched.
+func BehindBaseCount(headRef, baseBranch string) (int, error) {
+	if _, err := runGit("fetch", "origin", headRef, baseBranch); err != nil {
+		return 0, fmt.Errorf("failed to fetch %s and %s from origin: %w", headRef, baseBranch, err)
+	}
+
+	out, err := runGit("rev-list", "--count", "origin/"+headRef+"..origin/"+baseBranch)
+	if err != nil {
+		return 0, fmt.Errorf("failed to check commits behind base branch: %w", err)
+	}
+	count, err := parseBehindCount(out)
+	if err != nil {
+		return 0, err
+	}
+	return count, nil
+}
+
+func parseBehindCount(stdout string) (int, error) {
+	count, err := strconv.Atoi(strings.TrimSpace(stdout))
+	if err != nil {
+		return 0, fmt.Errorf("invalid behind count %q: %w", strings.TrimSpace(stdout), err)
+	}
+	if count < 0 {
+		return 0, fmt.Errorf("invalid negative behind count %d", count)
+	}
+	return count, nil
 }
 
 // parseConflictOutput extracts conflicting file paths from git merge-tree
