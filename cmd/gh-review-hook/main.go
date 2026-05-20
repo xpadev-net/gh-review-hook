@@ -284,32 +284,33 @@ func run() int {
 	reviewCommentsByReviewID := actionableReviewCommentsByReviewID(reviewComments, headCommitTime)
 	feedbackParts = append(feedbackParts, pullRequestReviewFeedback(reviews, reviewCommentsByReviewID, latestPR.Head.SHA)...)
 
-	// Step 12: Check whether the PR branch is behind the base branch
+	// Step 12: Check base branch status using one shared fetch
 	if latestPR.Head.Ref != "" && latestPR.Base.Ref != "" {
-		behindCount, err := git.BehindBaseCount(latestPR.Head.Ref, latestPR.Base.Ref)
-		if err != nil {
-			fmt.Fprintf(os.Stderr, "warning: base branch behind check failed: %v\n", err)
-		} else if behindCount > 0 {
-			feedbackParts = append(feedbackParts, formatBehindBaseBranchFeedback(latestPR.Base.Ref, behindCount))
-		}
-	}
-
-	// Step 13: Check for merge conflicts with base branch
-	if latestPR.Head.Ref != "" && latestPR.Base.Ref != "" {
-		conflictFiles, err := git.ConflictFiles(latestPR.Head.Ref, latestPR.Base.Ref)
-		if err != nil {
-			fmt.Fprintf(os.Stderr, "warning: merge conflict check failed: %v\n", err)
-		} else if len(conflictFiles) > 0 {
-			var sb strings.Builder
-			sb.WriteString("Merge conflicts detected with base branch '")
-			sb.WriteString(latestPR.Base.Ref)
-			sb.WriteString("':\n")
-			for _, f := range conflictFiles {
-				sb.WriteString("- ")
-				sb.WriteString(f)
-				sb.WriteString("\n")
+		if err := git.FetchRemoteRefs(latestPR.Head.Ref, latestPR.Base.Ref); err != nil {
+			fmt.Fprintf(os.Stderr, "warning: base branch checks failed: %v\n", err)
+		} else {
+			behindCount, err := git.BehindBaseCountFromOrigin(latestPR.Head.Ref, latestPR.Base.Ref)
+			if err != nil {
+				fmt.Fprintf(os.Stderr, "warning: base branch behind check failed: %v\n", err)
+			} else if behindCount > 0 {
+				feedbackParts = append(feedbackParts, formatBehindBaseBranchFeedback(latestPR.Base.Ref, behindCount))
 			}
-			feedbackParts = append(feedbackParts, strings.TrimRight(sb.String(), "\n"))
+
+			conflictFiles, err := git.ConflictFilesFromOrigin(latestPR.Head.Ref, latestPR.Base.Ref)
+			if err != nil {
+				fmt.Fprintf(os.Stderr, "warning: merge conflict check failed: %v\n", err)
+			} else if len(conflictFiles) > 0 {
+				var sb strings.Builder
+				sb.WriteString("Merge conflicts detected with base branch '")
+				sb.WriteString(latestPR.Base.Ref)
+				sb.WriteString("':\n")
+				for _, f := range conflictFiles {
+					sb.WriteString("- ")
+					sb.WriteString(f)
+					sb.WriteString("\n")
+				}
+				feedbackParts = append(feedbackParts, strings.TrimRight(sb.String(), "\n"))
+			}
 		}
 	}
 

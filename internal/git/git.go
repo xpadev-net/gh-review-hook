@@ -94,10 +94,23 @@ func parseRemoteURL(url string) (string, string, error) {
 //
 // Requires Git 2.40+. Errors are treated as soft failures by the caller.
 func ConflictFiles(headRef, baseBranch string) ([]string, error) {
-	if _, err := runGit("fetch", "origin", headRef, baseBranch); err != nil {
-		return nil, fmt.Errorf("failed to fetch %s and %s from origin: %w", headRef, baseBranch, err)
+	if err := FetchRemoteRefs(headRef, baseBranch); err != nil {
+		return nil, err
 	}
+	return ConflictFilesFromOrigin(headRef, baseBranch)
+}
 
+// FetchRemoteRefs updates origin/<headRef> and origin/<baseBranch>.
+func FetchRemoteRefs(headRef, baseBranch string) error {
+	if _, err := runGit("fetch", "origin", headRef, baseBranch); err != nil {
+		return fmt.Errorf("failed to fetch %s and %s from origin: %w", headRef, baseBranch, err)
+	}
+	return nil
+}
+
+// ConflictFilesFromOrigin performs a non-destructive merge simulation using
+// already-fetched origin refs.
+func ConflictFilesFromOrigin(headRef, baseBranch string) ([]string, error) {
 	stdout, exitCode, err := runGitWithExitCode(
 		"merge-tree", "--write-tree", "--name-only", "--no-messages",
 		"origin/"+headRef, "origin/"+baseBranch,
@@ -123,10 +136,14 @@ func ConflictFiles(headRef, baseBranch string) ([]string, error) {
 // BehindBaseCount returns how many commits origin/<baseBranch> has that
 // origin/<headRef> does not. The working tree and index are never touched.
 func BehindBaseCount(headRef, baseBranch string) (int, error) {
-	if _, err := runGit("fetch", "origin", headRef, baseBranch); err != nil {
-		return 0, fmt.Errorf("failed to fetch %s and %s from origin: %w", headRef, baseBranch, err)
+	if err := FetchRemoteRefs(headRef, baseBranch); err != nil {
+		return 0, err
 	}
+	return BehindBaseCountFromOrigin(headRef, baseBranch)
+}
 
+// BehindBaseCountFromOrigin counts commits using already-fetched origin refs.
+func BehindBaseCountFromOrigin(headRef, baseBranch string) (int, error) {
 	out, err := runGit("rev-list", "--count", "origin/"+headRef+"..origin/"+baseBranch)
 	if err != nil {
 		return 0, fmt.Errorf("failed to check commits behind base branch: %w", err)
