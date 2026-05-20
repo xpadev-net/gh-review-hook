@@ -163,6 +163,44 @@ func TestFormatPullRequestReview_UsesCommentsWhenReviewBodyIsEmpty(t *testing.T)
 	}
 }
 
+func TestFormatBehindBaseBranchFeedback(t *testing.T) {
+	tests := []struct {
+		name  string
+		count int
+		want  []string
+	}{
+		{
+			name:  "singular",
+			count: 1,
+			want: []string{
+				"PR is 1 commit behind base branch 'main'.",
+				"merging base branch 'main' instead of rebasing",
+				"avoid rewriting history",
+			},
+		},
+		{
+			name:  "plural",
+			count: 3,
+			want: []string{
+				"PR is 3 commits behind base branch 'main'.",
+				"merging base branch 'main' instead of rebasing",
+				"avoid rewriting history",
+			},
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			got := formatBehindBaseBranchFeedback("main", tt.count)
+			for _, want := range tt.want {
+				if !strings.Contains(got, want) {
+					t.Fatalf("feedback missing %q:\n%s", want, got)
+				}
+			}
+		})
+	}
+}
+
 func TestIsActionablePullRequestReview_SkipsHandledBotReviews(t *testing.T) {
 	const headSHA = "head-sha"
 	tests := []struct {
