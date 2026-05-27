@@ -49,6 +49,8 @@ func run() int {
 		}
 	}
 
+	fmt.Fprintf(os.Stderr, "[gh-review-hook] PR readiness checker — checks CI, AI reviews (Greptile/CodeRabbit), base branch status, and merge conflicts\n")
+
 	// Step 1: Check working tree cleanliness
 	noUpstream, err := git.EnsureClean()
 	if err != nil {
@@ -90,6 +92,8 @@ func run() int {
 			return 0
 		}
 	}
+
+	fmt.Fprintf(os.Stderr, "[gh-review-hook] Checking PR #%d (%s/%s) — https://github.com/%s/%s/pull/%d\n", pr.Number, owner, repo, owner, repo, pr.Number)
 
 	// Step 4: Wait for CI checks to complete
 	ciResult, err := github.WaitForChecks(owner, repo, pr.Head.SHA, token, os.Stderr)
