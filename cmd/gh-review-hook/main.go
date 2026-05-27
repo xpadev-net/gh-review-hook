@@ -66,6 +66,7 @@ func run() int {
 		}
 		if pr == nil {
 			// No PR found — nothing to review
+			fmt.Fprintln(os.Stdout, "No open PR found for the current branch.")
 			return 0
 		}
 	}
