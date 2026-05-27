@@ -20,13 +20,33 @@ import (
 // after CI checks complete.
 var greptileUpdateDelay = 10 * time.Second
 
+func printHelp() {
+	fmt.Println(`gh-review-hook - Claude Code Stop hook that checks PR readiness
+
+Usage:
+  gh-review-hook                          Auto-detect PR from current branch
+  gh-review-hook <PR number>              Check a specific PR by number
+  gh-review-hook <PR URL>                 Check a specific PR by URL
+  gh-review-hook install                  Register as a Claude Code Stop hook
+  gh-review-hook --help                   Show this help message
+
+Options:
+  -h, --help    Show this help message`)
+}
+
 func main() {
 	os.Exit(run())
 }
 
 func run() int {
-	if len(os.Args) > 1 && os.Args[1] == "install" {
-		return runInstall()
+	if len(os.Args) > 1 {
+		switch os.Args[1] {
+		case "install":
+			return runInstall()
+		case "--help", "-h", "-help", "help":
+			printHelp()
+			return 0
+		}
 	}
 
 	// Step 1: Check working tree cleanliness
