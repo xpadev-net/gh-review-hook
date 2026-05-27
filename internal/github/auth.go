@@ -7,16 +7,19 @@ import (
 	"strings"
 )
 
-func isCodexSandbox() bool {
-	return os.Getenv("CODEX_SANDBOX") != ""
+func sandboxNote() string {
+	if os.Getenv("CODEX_SANDBOX") != "" {
+		return "\nNote: running inside Codex sandbox — try running outside the sandbox instead"
+	}
+	return ""
+}
+
+func ghNotInstalledMessage() string {
+	return "GitHub token not found: set GITHUB_TOKEN or install gh CLI (https://cli.github.com)" + sandboxNote()
 }
 
 func tokenNotFoundMessage() string {
-	msg := "GitHub token not found: set GITHUB_TOKEN or run 'gh auth login'"
-	if isCodexSandbox() {
-		msg += "\nNote: running inside Codex sandbox — try running outside the sandbox instead"
-	}
-	return msg
+	return "GitHub token not found: set GITHUB_TOKEN or run 'gh auth login'" + sandboxNote()
 }
 
 // GetToken resolves a GitHub API token. It checks the GITHUB_TOKEN environment
@@ -27,7 +30,7 @@ func GetToken() (string, error) {
 	}
 
 	if _, err := exec.LookPath("gh"); err != nil {
-		return "", errors.New(tokenNotFoundMessage())
+		return "", errors.New(ghNotInstalledMessage())
 	}
 
 	cmd := exec.Command("gh", "auth", "token")
