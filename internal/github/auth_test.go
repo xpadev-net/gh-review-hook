@@ -28,6 +28,7 @@ func TestGetToken_EmptyEnv(t *testing.T) {
 
 func TestGetToken_GhNotInstalled(t *testing.T) {
 	t.Setenv("GITHUB_TOKEN", "")
+	t.Setenv("CODEX_SANDBOX", "")
 	t.Setenv("PATH", t.TempDir())
 
 	_, err := GetToken()
@@ -71,6 +72,7 @@ func TestTokenNotFoundMessage_Sandbox(t *testing.T) {
 }
 
 func TestGhNotInstalledMessage(t *testing.T) {
+	t.Setenv("CODEX_SANDBOX", "")
 	msg := ghNotInstalledMessage()
 	if !strings.Contains(msg, "install gh CLI") {
 		t.Errorf("message should suggest installing gh CLI: %q", msg)
