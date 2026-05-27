@@ -50,6 +50,8 @@ func run() int {
 	}
 
 	fmt.Fprintf(os.Stderr, "[gh-review-hook] PR readiness checker — checks CI, AI reviews (Greptile/CodeRabbit), base branch status, and merge conflicts\n")
+	fmt.Fprintf(os.Stderr, "[gh-review-hook] CI and AI review checks may take 10+ minutes — do not interrupt while waiting\n")
+	fmt.Fprintf(os.Stderr, "[gh-review-hook] This command exits when CI completes; run in blocking mode, not in background\n")
 
 	// Step 1: Check working tree cleanliness
 	noUpstream, err := git.EnsureClean()
