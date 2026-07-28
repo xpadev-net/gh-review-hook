@@ -95,6 +95,11 @@ func run() int {
 		}
 	}
 
+	if feedback, blocked := draftPRFeedback(pr); blocked {
+		fmt.Fprintln(os.Stderr, feedback)
+		return 2
+	}
+
 	fmt.Fprintf(os.Stderr, "[gh-review-hook] Checking PR #%d (%s/%s) — https://github.com/%s/%s/pull/%d\n", pr.Number, owner, repo, owner, repo, pr.Number)
 
 	// Step 4: Wait for CI checks to complete
@@ -361,6 +366,17 @@ func formatBehindBaseBranchFeedback(baseRef string, count int) string {
 		baseRef,
 		baseRef,
 	)
+}
+
+func formatDraftPRFeedback(number int) string {
+	return fmt.Sprintf("PR #%d is still a draft. Please mark it ready for review before running gh-review-hook.", number)
+}
+
+func draftPRFeedback(pr *github.PR) (string, bool) {
+	if pr == nil || !pr.Draft {
+		return "", false
+	}
+	return formatDraftPRFeedback(pr.Number), true
 }
 
 func pullRequestReviewFeedback(reviews []github.PullRequestReview, reviewCommentsByReviewID map[int64][]github.PullRequestReviewComment, headSHA string) []string {

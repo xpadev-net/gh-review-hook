@@ -201,6 +201,41 @@ func TestFormatBehindBaseBranchFeedback(t *testing.T) {
 	}
 }
 
+func TestFormatDraftPRFeedback(t *testing.T) {
+	got := formatDraftPRFeedback(42)
+	for _, want := range []string{
+		"PR #42 is still a draft.",
+		"mark it ready for review",
+	} {
+		if !strings.Contains(got, want) {
+			t.Fatalf("feedback missing %q:\n%s", want, got)
+		}
+	}
+}
+
+func TestDraftPRFeedback(t *testing.T) {
+	var draftPR github.PR
+	draftPR.Number = 42
+	draftPR.Draft = true
+
+	feedback, blocked := draftPRFeedback(&draftPR)
+	if !blocked {
+		t.Fatal("draft PR should be blocked")
+	}
+	if !strings.Contains(feedback, "PR #42 is still a draft.") {
+		t.Fatalf("feedback missing draft PR number:\n%s", feedback)
+	}
+
+	var readyPR github.PR
+	readyPR.Number = 43
+	if feedback, blocked := draftPRFeedback(&readyPR); blocked || feedback != "" {
+		t.Fatalf("ready PR feedback = %q, blocked = %v; want empty/false", feedback, blocked)
+	}
+	if feedback, blocked := draftPRFeedback(nil); blocked || feedback != "" {
+		t.Fatalf("nil PR feedback = %q, blocked = %v; want empty/false", feedback, blocked)
+	}
+}
+
 func TestIsActionablePullRequestReview_SkipsHandledBotReviews(t *testing.T) {
 	const headSHA = "head-sha"
 	tests := []struct {
