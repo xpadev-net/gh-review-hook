@@ -245,7 +245,7 @@ func TestFindPR(t *testing.T) {
 	}{
 		{
 			name:       "found PR",
-			response:   `[{"number":42,"body":"test","head":{"sha":"abc","ref":"feat"},"base":{"ref":"main"}}]`,
+			response:   `[{"number":42,"body":"test","draft":true,"head":{"sha":"abc","ref":"feat"},"base":{"ref":"main"}}]`,
 			statusCode: 200,
 			wantNumber: 42,
 		},
@@ -303,6 +303,9 @@ func TestFindPR(t *testing.T) {
 			if pr.Number != tt.wantNumber {
 				t.Errorf("PR number = %d, want %d", pr.Number, tt.wantNumber)
 			}
+			if tt.name == "found PR" && !pr.Draft {
+				t.Error("PR draft = false, want true")
+			}
 		})
 	}
 }
@@ -313,7 +316,7 @@ func TestGetPR(t *testing.T) {
 	mux.HandleFunc("/", func(w http.ResponseWriter, r *http.Request) {
 		gotPath = r.URL.Path
 		w.Header().Set("Content-Type", "application/json")
-		fmt.Fprint(w, `{"number":99,"body":"pr body","head":{"sha":"def456","ref":"my-branch"},"base":{"ref":"main"}}`)
+		_, _ = fmt.Fprint(w, `{"number":99,"body":"pr body","draft":true,"head":{"sha":"def456","ref":"my-branch"},"base":{"ref":"main"}}`)
 	})
 	withTestServer(t, mux)
 
@@ -326,6 +329,9 @@ func TestGetPR(t *testing.T) {
 	}
 	if pr.Body != "pr body" {
 		t.Errorf("PR body = %q, want %q", pr.Body, "pr body")
+	}
+	if !pr.Draft {
+		t.Error("PR draft = false, want true")
 	}
 	if pr.Head.SHA != "def456" {
 		t.Errorf("PR head SHA = %q, want %q", pr.Head.SHA, "def456")

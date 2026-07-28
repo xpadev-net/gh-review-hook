@@ -88,6 +88,7 @@ func parseRetryAfter(h http.Header) time.Duration {
 type PR struct {
 	Number int    `json:"number"`
 	Body   string `json:"body"`
+	Draft  bool   `json:"draft"`
 	Head   struct {
 		SHA string `json:"sha"`
 		Ref string `json:"ref"`
