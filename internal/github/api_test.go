@@ -316,7 +316,7 @@ func TestGetPR(t *testing.T) {
 	mux.HandleFunc("/", func(w http.ResponseWriter, r *http.Request) {
 		gotPath = r.URL.Path
 		w.Header().Set("Content-Type", "application/json")
-		fmt.Fprint(w, `{"number":99,"body":"pr body","draft":true,"head":{"sha":"def456","ref":"my-branch"},"base":{"ref":"main"}}`)
+		_, _ = fmt.Fprint(w, `{"number":99,"body":"pr body","draft":true,"head":{"sha":"def456","ref":"my-branch"},"base":{"ref":"main"}}`)
 	})
 	withTestServer(t, mux)
 
